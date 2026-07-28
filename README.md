@@ -44,9 +44,9 @@ To run this pipeline, you need a Unix/Linux environment with the following tools
 
 ---
 
-## Workflow
+## Workflow - Transcriptome
 
-### 1. # Set Up the References and Files
+### 1. Set Up the References and Files
 
 The RNA-seq data were initially processed using the [nf-core/rnaseq](https://nf-co.re/rnaseq/3.26.0) pipeline (Nextflow v26.04.3; nf-core/rnaseq v3.26.0-ge7ca462), with the *Saccharum officinarum × S. spontaneum* R570 genome used as the reference. The pipeline was run with its default workflow, which performs read alignment with **STAR** and transcript abundance quantification with **Salmon**.
 
@@ -176,3 +176,87 @@ wc -l data/lncRNA_candidate_ids.txt
 
 Both numbers should match!
 
+---
+
+## Workflow - lncRNA prediction
+
+Five lncRNA prediction methods were used, and a consensus was obtained after prediction by each of the methods.
+
+### Methods
+#### 1. CPC2
+CPC2: a fast and accurate coding potential calculator based on sequence intrinsic features. From: https://doi.org/10.1093/nar/gkx428
+Install and run following the official instructions here https://cpc2.gao-lab.org/download.php
+#### 2. RNAplonc
+Pattern recognition analysis on long noncoding RNAs: a tool for prediction in plants. From: https://doi.org/10.1093/bib/bby034
+Install and run following the official docker instructions here https://github.com/TatianneNegri/RNAplonc
+#### 3. RNAsamba
+RNAsamba: neural network-based assessment of the protein-coding potential of RNA sequences. From: https://doi.org/10.1093/nargab/lqz024
+Install and run following the official conda instructions: https://github.com/apcamargo/RNAsamba
+with the two weights available in the repository
+#### 4. LncADeep2.0
+A novel deep learning-driven framework for improving lncRNA comprehensive annotation with LncADeep 2.0. From: https://doi.org/10.1093/bioinformatics/btag162
+Install and run following the official repository instructions: https://github.com/Jefferson-Chou/LncADeep2
+#### 5. FEELnc
+FEELnc: a tool for long non-coding RNA annotation and its application to the dog transcriptome. From: https://doi.org/10.1093/nar/gkw1306
+Install and run following the official repository instructions with conda: https://github.com/tderrien/FEELnc 
+```bash
+FEELnc_codpot.pl \
+    -i lncRNA_candidates.gtf \
+    -a SofficinarumxspontaneumR570_771_v2.1.gene_exons.gtf \
+    -g SofficinarumxspontaneumR570_771_v2.0.fasta \
+    -m intergenic \
+    --outdir feelnc_codpot
+```  
+```bash
+FEELnc_classifier.pl \
+	-i lncRNA_candidates.gtf.lncRNA.gtf \
+	-a reference/SofficinarumxspontaneumR570_771_v2.1.gene_exons.gtf > lncRNA_classes.txt
+```
+### Consensus
+Using `consensus.R`, the consensus was obtained in three different ways.
+#### 1. Majority voting
+```r
+merged <- merged %>%
+  mutate(
+    vote_pred = case_when(
+      n_lncRNA > n_mRNA ~ "lncRNA",
+      n_mRNA > n_lncRNA ~ "mRNA",
+      n_lncRNA == n_mRNA ~ consensus_pred,
+      TRUE ~ NA_character_
+    )
+  )
+```  
+#### 2. Maximum Entropy Threshold
+Get the threshold using the maximum entropy principle.
+```r
+maxentropy_result <- maxentropy(merged$consensus_score)
+best_thresh <- maxentropy_result$Frequency
+
+threshold <- best_thresh
+merged <- merged %>%
+  mutate(
+    consensus_pred = case_when(
+      consensus_score >= threshold ~ "mRNA",
+      consensus_score < threshold ~ "lncRNA",
+      TRUE ~ NA_character_
+    )
+  )
+````
+#### 3. High confidence 
+For samples where all 5 methods predicted the same class with unambiguous scores.
+```r
+merged <- merged %>%
+  mutate(
+    high_confidence_pred = case_when(
+      cpc2_pred == "lncRNA" & lncadeep_pred == "lncRNA" &
+        rnasamba_pred == "lncRNA" & feelnc_pred == "lncRNA" &
+        cpc2_score < 0.2 & lncadeep_score < 0.2 & rnasamba_score < 0.2 &
+        feelnc_score < 0.2 ~ "lncRNA",
+      
+      cpc2_pred == "mRNA" & lncadeep_pred == "mRNA" & # rnaplonc_pred == "mRNA" &
+        rnasamba_pred == "mRNA" & feelnc_pred == "mRNA" &
+        cpc2_score > 0.8 & lncadeep_score > 0.8 & rnasamba_score > 0.8 &
+        feelnc_score > 0.8 ~ "mRNA",
+    )
+  )
+```

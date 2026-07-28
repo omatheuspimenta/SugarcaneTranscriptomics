@@ -1,0 +1,4 @@
+# Summary file:
+-With_cutoff:	0.4546
+-Nb_lncRNAs:	29832
+-Nb_mRNAs:	12220
