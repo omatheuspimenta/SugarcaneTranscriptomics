@@ -1,6 +1,6 @@
-# RNAseq to lncRNA in Sugarcane (Saccharum spp.)
+# RNAseq Analysis in Sugarcane (Saccharum spp.)
 
-This repository contains a step-by-step workflow to predict **long non-coding RNAs (lncRNAs)** from sugarcane RNA-seq data. This guide is written to be as reproducible and easy to understand as possible. 
+This repository contains a step-by-step workflow to predict **long non-coding RNAs (lncRNAs)** and **Resistance gene analogs (RGAs)**  from sugarcane RNA-seq data. This guide is written to be as reproducible and easy to understand as possible. 
 
 ---
 
@@ -8,6 +8,7 @@ This repository contains a step-by-step workflow to predict **long non-coding RN
 1. **The Goal:** Find new, unmapped RNA sequences in sugarcane that do not code for proteins, are longer than 200 (base pairs), and might be long non-coding RNAs (lncRNAs).
 2. **The Starting Point:** We start with data that has already been cleaned and aligned to a sugarcane reference genome (R570) using the `nf-core/rnaseq` pipeline.
 3. **The Output:** A `FASTA` file (`lncRNA_candidates.fa`) containing the actual sequences of our candidate lncRNAs, ready for downstream analysis.
+4. **lncRNA prediction:** Use 5 methods to predict lncRNA and get the consensus from the predictions.
 
 ---
 
