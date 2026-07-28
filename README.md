@@ -184,20 +184,20 @@ Five lncRNA prediction methods were used, and a consensus was obtained after pre
 
 ### Methods
 #### 1. CPC2
-CPC2: a fast and accurate coding potential calculator based on sequence intrinsic features. From: https://doi.org/10.1093/nar/gkx428
+CPC2: a fast and accurate coding potential calculator based on sequence intrinsic features. From: https://doi.org/10.1093/nar/gkx428  
 Install and run following the official instructions here https://cpc2.gao-lab.org/download.php
 #### 2. RNAplonc
-Pattern recognition analysis on long noncoding RNAs: a tool for prediction in plants. From: https://doi.org/10.1093/bib/bby034
+Pattern recognition analysis on long noncoding RNAs: a tool for prediction in plants. From: https://doi.org/10.1093/bib/bby034  
 Install and run following the official docker instructions here https://github.com/TatianneNegri/RNAplonc
 #### 3. RNAsamba
-RNAsamba: neural network-based assessment of the protein-coding potential of RNA sequences. From: https://doi.org/10.1093/nargab/lqz024
+RNAsamba: neural network-based assessment of the protein-coding potential of RNA sequences. From: https://doi.org/10.1093/nargab/lqz024  
 Install and run following the official conda instructions: https://github.com/apcamargo/RNAsamba
 with the two weights available in the repository
 #### 4. LncADeep2.0
-A novel deep learning-driven framework for improving lncRNA comprehensive annotation with LncADeep 2.0. From: https://doi.org/10.1093/bioinformatics/btag162
+A novel deep learning-driven framework for improving lncRNA comprehensive annotation with LncADeep 2.0. From: https://doi.org/10.1093/bioinformatics/btag162  
 Install and run following the official repository instructions: https://github.com/Jefferson-Chou/LncADeep2
 #### 5. FEELnc
-FEELnc: a tool for long non-coding RNA annotation and its application to the dog transcriptome. From: https://doi.org/10.1093/nar/gkw1306
+FEELnc: a tool for long non-coding RNA annotation and its application to the dog transcriptome. From: https://doi.org/10.1093/nar/gkw1306  
 Install and run following the official repository instructions with conda: https://github.com/tderrien/FEELnc 
 ```bash
 FEELnc_codpot.pl \
