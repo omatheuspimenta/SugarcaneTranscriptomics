@@ -297,3 +297,23 @@ awk -F'\t' 'NR==FNR { ids[$1]; next }
   > data/lncRNA_final.gtf
 ```
 
+#### Tag in the GTF the lncRNA
+
+Include `lncRNA` tag into the GTF to downstream analysis.
+
+```bash
+awk -F'\t' 'BEGIN{OFS="\t"} { $9 = $9" gene_biotype \"lncRNA\";"; print }' \
+  data/lncRNA_final.gtf > data/lncRNA_final_tagged.gtf
+```
+
+### Merge both GTF annotation files
+
+Generate the extended GTF with the predicted `lncRNA` annotation  
+```bash
+cat data/reference/SofficinarumxspontaneumR570_771_v2.1.gene_exons.gtf \
+    data/lncRNA_final_tagged.gtf \
+  | sort -k1,1 -k4,4n \
+  > data/reference/SofficinarumxspontaneumR570_771_v2.1_extended.gtf
+```  
+
+### Run `rnaseq` pipeline with extended GTF file
