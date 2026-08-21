@@ -15,7 +15,7 @@
 
 ## set working directory
 
-setwd("~/Documents/ESALQ/RNAseq2lncRNA_sugarcane/code/lncRNA")
+setwd("~/Documents/ESALQ/SugarcaneTranscriptomics/code/lncRNA")
 
 ## ---------------------------
 
@@ -348,3 +348,13 @@ merged <- merged %>%
 
 ## Save the final merged data frame with consensus predictions
 write_csv(merged, "../../data/lncRNA/consensus_predictions.csv")
+
+## Get the IDs of the high confidence lncRNA and mRNA predictions
+# Column to extract the transcript IDs of high confidence lncRNA predictions
+col2extract <- "high_confidence_pred" # "consensus_pred"
+lncRNA_final_ids <- merged %>%
+  filter(.data[[col2extract]] == "lncRNA") %>%
+  pull(transcript)
+
+## Save the high confidence lncRNA IDs to a text file
+writeLines(lncRNA_final_ids, "../../data/lncRNA_final_ids.txt")
