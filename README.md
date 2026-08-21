@@ -284,3 +284,16 @@ merged <- merged %>%
     )
   )
 ```
+
+### Merge the consensus lncRNA list
+
+Filter the `lncRNA_candidates.gtf` to keep only the `lncRNA_final_ids.txt` IDs:  
+```bash
+awk -F'\t' 'NR==FNR { ids[$1]; next }
+  {
+    match($9, /transcript_id "([^"]+)"/, arr)
+    if (arr[1] in ids) print
+  }' data/lncRNA_final_ids.txt data/lncRNA_candidates.gtf \
+  > data/lncRNA_final.gtf
+```
+
