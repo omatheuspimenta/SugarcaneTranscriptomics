@@ -26,9 +26,10 @@ Because genomic files are incredibly large (often hundreds of Gigabytes), only t
     ├── lncRNA_candidate_ids.txt # Final list of candidate IDs
     ├── lncRNA_candidates.tar.xz # Compressed final FASTA results
     ├── references/              # Empty placeholder for reference genomes
-    └── stringtie_denovo/
-        └── mergelist_denovo.txt # List of all assembled transcripts
-
+    ├── stringtie_denovo/
+    │    └── mergelist_denovo.txt # List of all assembled transcripts
+    └── rgas/
+        └── ...
 ```
 
 *Note: If you want to run this pipeline from scratch, you will need to download the R570 reference genome and place it in `data/reference/`, and place your aligned `.bam` files in the appropriate folders.*
@@ -56,6 +57,17 @@ The resulting alignment (`.bam`) files are located in the `star_salmon` director
 * **Reference Annotation (GTF):** `data/reference/SofficinarumxspontaneumR570_771_v2.1.gene_exons.gtf`
 * **Reference Genome (FASTA):** `data/reference/SofficinarumxspontaneumR570_771_v2_assembly.fasta`
 
+> **Note — library strandedness**
+> The RNA-seq libraries used in this study are **unstranded**. This was confirmed
+> independently by Salmon (`lib_format_counts`) and RSeQC (`infer_experiment.py`)
+> for all 78 samples in the nf-core/rnaseq run: the sense/antisense read
+> composition is ~50/50 in every sample (49.1–50.4% sense, 49.2–50.3% antisense,
+> with under 1.3% of reads unassignable). The per-sample table is available in
+> `data/qc/multiqc_strand_check_summary_table.txt`.
+> This has a direct consequence for the assembly step below and for the strand
+> assignment of the resulting transcripts, addressed in the section
+> *Handling transcripts without strand information*.
+
 ### 2. Assemble Transcripts with StringTie
 
 Using the aligned data (`.bam` files), we run `StringTie` to assemble the reads into continuous transcripts. We use a script (`run_stringtie3.sh`) to automate this for all samples.
@@ -70,8 +82,20 @@ stringtie "$bam_file" \
 
 ```
 
-> **Note** 
-> We run StringTie without the `-e` option to perform reference-guided transcriptome assembly, allowing the identification of novel transcripts and isoforms in addition to those already annotated. Using the `-e` option would restrict StringTie to quantifying only the transcripts present in the reference GTF, without assembling new transcripts.
+> **Note**
+> We run StringTie without the `-e` option to perform reference-guided
+> transcriptome assembly, allowing the identification of novel transcripts and
+> isoforms in addition to those already annotated. Using the `-e` option would
+> restrict StringTie to quantifying only the transcripts present in the reference
+> GTF, without assembling new transcripts.
+>
+> No strandedness flag (`--rf` / `--fr`) is used, because the libraries are
+> unstranded (see section 1). StringTie infers transcript orientation from splice
+> junctions; for **monoexonic** transcripts assembled from unstranded data there
+> is no such evidence, and these transcripts are emitted with `.` in the strand
+> column of the GTF. This is expected behaviour, not an error, and is handled
+> explicitly further below.  
+> If the reads are stranded, you can add the -rf or -fr option to the command below. Check the StringTie manual for more details.
  
 After this runs for all samples, we create a file named `mergelist_denovo.txt` containing the paths to all the newly generated `.gtf` files.
 
@@ -191,7 +215,7 @@ Install and run following the official instructions here https://cpc2.gao-lab.or
 ```bash
 cd /code/lncRNA/CPC2/CPC2_standalone-1.0.1/bin/
 
-python CPC2.py -i ../../../../../data/lncRNA_candidates.fa -i -o cpc2output.txt
+python CPC2.py -i ../../../../../data/lncRNA_candidates.fa -o cpc2output.txt
 ```
 
 #### 2. RNAplonc
@@ -297,23 +321,248 @@ awk -F'\t' 'NR==FNR { ids[$1]; next }
   > data/lncRNA_final.gtf
 ```
 
+### Handling transcripts without strand information
+
+[#handling-transcripts-without-strand-information](#handling-transcripts-without-strand-information)
+
+Of the 3,914 transcripts retained by the consensus step, **1,396 (35.7%) carry no
+strand assignment** (`.` in column 7 of the GTF). All 1,396 are monoexonic, which
+is the expected signature: with unstranded libraries and no splice junction to
+read orientation from, StringTie cannot resolve the strand of a single-exon
+transcript.
+
+This creates two distinct problems.
+
+**Problem 1 — downstream tools reject the annotation.** `rsem-prepare-reference`,
+which nf-core/rnaseq invokes inside `PREPARE_GENOME:MAKE_TRANSCRIPTS_FASTA` to
+build the transcript FASTA, requires column 7 to be `+` or `-` and aborts with
+`Error Message: Strand is neither '+' nor '-'!` otherwise.
+
+**Problem 2 — the coding-potential predictions for these transcripts are
+unreliable.** In step 8, `gffread -w` extracts sequences using the GTF strand; a
+transcript marked `.` is emitted in the `+` orientation. For those whose true
+orientation is `-`, the sequence submitted to CPC2, RNAsamba, LncADeep2, RNAplonc and
+FEELnc was the reverse complement of the real transcript. Because these tools
+score ORFs in the orientation given, a genuine monoexonic mRNA read backwards
+tends to look non-coding, so this subset is enriched for false positives.
+Note that this problem exists regardless of what value is written in column 7 —
+it is a property of the sequences that were classified, not of the annotation.
+
+#### Bidirectional consistency filter
+
+To separate real non-coding transcripts from protein-coding transcripts captured
+in the wrong orientation, each of the 1,396 unstranded candidates was classified a
+second time in the reverse-complement orientation, and only transcripts predicted
+as lncRNA in **both** orientations were retained.
+
+```bash
+# extract the unstranded candidates and build their reverse complement
+seqkit grep -f data/lncRNA_sem_fita.txt data/lncRNA_candidates.fa \
+  > data/sem_fita.fa
+seqkit seq -r -p data/sem_fita.fa | sed '/^>/s/$/_rev/' \
+  > data/sem_fita_rev.fa
+```
+
+CPC2, RNAsamba, RNAplonc and LncADeep2 were then re-run on `sem_fita_rev.fa` and the same
+consensus procedure applied. **670 of the 1,396 (48.0%) were classified as lncRNA
+in both orientations and retained; 726 were discarded** and are listed in
+`data/lncRNA_semfita_reprovados.txt`.
+
+```bash
+# normalise IDs (drop the _rev suffix added above)
+sed 's/_rev$//' data/lncRNA_rev_aprovados_raw.txt | sort -u \
+  > data/lncRNA_semfita_aprovados.txt
+
+# sanity check: every approved ID must belong to the unstranded set
+comm -23 data/lncRNA_semfita_aprovados.txt \
+         <(sort -u data/lncRNA_sem_fita.txt) | wc -l   # must be 0
+
+# keep the discarded ones for the record
+comm -13 data/lncRNA_semfita_aprovados.txt \
+         <(sort -u data/lncRNA_sem_fita.txt) \
+  > data/lncRNA_semfita_reprovados.txt
+```
+
+#### Strand assignment for the retained transcripts
+
+The 670 retained transcripts are assigned `+` so that the annotation is valid for
+RSEM and every downstream tool, and are flagged with a `strand_arbitrary "true"`
+attribute so that this assignment can never be mistaken for an observation:
+
+```bash
+awk -F'\t' 'BEGIN{OFS="\t"}
+  NR==FNR { ok[$1]; next }
+  $7=="." {
+    match($9, /transcript_id "([^"]+)"/, a)
+    if (a[1] in ok) { $7="+"; $9=$9" strand_arbitrary \"true\";"; print }
+  }' data/lncRNA_semfita_aprovados.txt data/lncRNA_final_tagged.gtf \
+  > data/lncRNA_semfita_aprovados.gtf
+```
+
+Assigning an arbitrary strand does **not** bias quantification in this dataset:
+because the libraries are unstranded, Salmon and featureCounts run in unstranded
+mode and ignore the annotated orientation when assigning reads. The flag matters
+for interpretation, not for counting.
+
+> **Warning**
+> Any analysis whose conclusions depend on transcript orientation — FEELnc
+> sense/antisense classification, sense–antisense pairing, cis-regulatory
+> hypotheses relative to neighbouring genes — must exclude the transcripts
+> carrying `strand_arbitrary "true"`, or treat them as a separate group.
+
+#### Limitations
+
+The bidirectional criterion trades sensitivity for specificity in an amount that
+cannot be quantified from the data alone. Among the 726 discarded transcripts
+there are monoexonic mRNAs assembled in the wrong orientation (the intended
+target of the filter), but also genuine lncRNAs whose reverse complement happened
+to score as coding. The 48.0% retention rate is consistent with a substantial
+fraction of the unstranded set being protein-coding transcripts read backwards,
+but it does not by itself establish that. Sequencing a stranded library would be
+the only way to resolve the orientation of these transcripts directly.
+
 #### Tag in the GTF the lncRNA
 
-Include `lncRNA` tag into the GTF to downstream analysis.
+[#tag-in-the-gtf-the-lncrna](#tag-in-the-gtf-the-lncrna)
+
+Include the `lncRNA` tag in the GTF for downstream analysis:
 
 ```bash
 awk -F'\t' 'BEGIN{OFS="\t"} { $9 = $9" gene_biotype \"lncRNA\";"; print }' \
   data/lncRNA_final.gtf > data/lncRNA_final_tagged.gtf
 ```
 
+Then split the tagged annotation into the transcripts with an observed strand and
+the retained unstranded transcripts (see *Handling transcripts without strand
+information*), and merge them into the final lncRNA annotation:
+
+```bash
+# 2,518 transcripts with an observed strand
+awk -F'\t' 'BEGIN{OFS="\t"} /^#/{print; next} $7=="+" || $7=="-"' \
+  data/lncRNA_final_tagged.gtf > data/lncRNA_final_tagged.stranded.gtf
+
+# 2,518 + 670 = 3,188 transcripts
+cat data/lncRNA_final_tagged.stranded.gtf \
+    data/lncRNA_semfita_aprovados.gtf \
+  | sort -k1,1 -k4,4n \
+  > data/lncRNA_final_v2.gtf
+
+# validation: count unique transcript_id, not lines
+grep -o 'transcript_id "[^"]*"' data/lncRNA_final_v2.gtf | sort -u | wc -l
+```
+
+Regenerate the FASTA and the ID list from the final annotation so that all three
+files stay consistent:
+
+```bash
+gffread -w data/lncRNA_final_v2.fa \
+  -g data/reference/SofficinarumxspontaneumR570_771_v2.0.fasta \
+  data/lncRNA_final_v2.gtf
+
+grep -c '^>' data/lncRNA_final_v2.fa   # 3188
+
+grep -o 'transcript_id "[^"]*"' data/lncRNA_final_v2.gtf \
+  | sed 's/transcript_id "\(.*\)"/\1/' | sort -u \
+  > data/lncRNA_final_ids_v2.txt
+```
+
 ### Merge both GTF annotation files
 
-Generate the extended GTF with the predicted `lncRNA` annotation  
+[#merge-both-gtf-annotation-files](#merge-both-gtf-annotation-files)
+
+Generate the extended GTF combining the reference annotation with the predicted
+lncRNAs:
+
 ```bash
 cat data/reference/SofficinarumxspontaneumR570_771_v2.1.gene_exons.gtf \
-    data/lncRNA_final_tagged.gtf \
+    data/lncRNA_final_v2.gtf \
   | sort -k1,1 -k4,4n \
-  > data/reference/SofficinarumxspontaneumR570_771_v2.1_extended.gtf
-```  
+  > data/reference/SofficinarumxspontaneumR570_771_v2.1_extended.final.gtf
+```
+
+Validate the merged annotation before launching the pipeline — RSEM reports one
+problem at a time, and a full re-run is expensive:
+
+```bash
+G=data/reference/SofficinarumxspontaneumR570_771_v2.1_extended.final.gtf
+
+# no invalid strand — must return 0
+awk -F'\t' '$0!~/^#/ && $7!="+" && $7!="-"' $G | wc -l
+
+# lncRNA transcripts present — must return 3188
+grep -o 'transcript_id "MSTRG[^"]*"' $G | sort -u | wc -l
+
+# transcript_id appearing on more than one contig/strand — must return nothing
+awk -F'\t' '$3=="exon"{
+    match($9,/transcript_id "([^"]+)"/,a); print a[1]"\t"$1"\t"$7
+  }' $G | sort -u | cut -f1 | uniq -d | head
+
+# contig names must match the genome FASTA passed to the pipeline
+head -1 data/reference/SofficinarumxspontaneumR570_771_v2.0.fasta
+cut -f1 $G | sort -u | head
+```
 
 ### Run `rnaseq` pipeline with extended GTF file
+
+### Run `rnaseq` pipeline with extended GTF file
+
+[#run-rnaseq-pipeline-with-extended-gtf-file](#run-rnaseq-pipeline-with-extended-gtf-file)
+
+The pipeline is re-run with the extended annotation to quantify reference genes
+and predicted lncRNAs together. Parameters used (`params.yaml`):
+
+```yaml
+input: samplesheet.csv
+outdir: resultados_rnaseq_extended
+
+fasta: data/reference/SofficinarumxspontaneumR570_771_v2.0.fa.gz
+gtf: data/reference/SofficinarumxspontaneumR570_771_v2.1_extended.final.gtf
+
+featurecounts_group_type: gene_id
+
+extra_star_align_args: "--limitSjdbInsertNsj 3000000 --outBAMcompression 10"
+extra_salmon_quant_args: "--seqBias --gcBias --numGibbsSamples 30 --validateMappings"
+
+skip_bigwig: true
+skip_preseq: true
+
+max_cpus: 252
+max_memory: "500 GB"
+```
+
+```bash
+nextflow run nf-core/rnaseq \
+    -profile singularity \
+    -c custom_star.config \
+    -params-file params.yaml \
+    -w "/dados03/diego_rnaseq_sugarcane_lncRNA/rnaseq_work/" \
+    -resume
+```
+
+---
+
+## Resistance Gene Analog (RGA) prediction
+
+Genome-wide prediction and classification of Resistance Gene Analogs from the R570
+proteome, harmonising InterProScan, Phobius, DeepTMHMM, SignalP 6.0, DeepLoc 2.0 and
+DeepCoil2 into one ordered, mutually exclusive rule set.
+
+```bash
+uv sync --extra dev
+uv run python code/rgas_prediction.py \
+  --input-dir data/rgas \
+  --outdir results/rgas/SaccharumR570 \
+  --organism-name "Saccharum officinarum x spontaneum R570"
+```
+
+Reference run: 299,731 proteins, 29,151 RGA candidates (9.7 %) — 4,023 NLR, 8,564 RLK,
+1,318 RLP, 3,960 TM-CC, 20 NLR-associated, 11,266 Other.
+
+**Full methodology, decision rules, data dictionary, limitations and references:
+[`docs/rga/README.md`](docs/rga/README.md).**
+**How it is built and why — module map, stage-by-stage diagrams and the decision log:
+[`docs/rga/ARCHITECTURE.md`](docs/rga/ARCHITECTURE.md).**
+Configuration: [`code/config/rga_config.yaml`](code/config/rga_config.yaml) —
+every accession, threshold and rule lives there, and adapting the pipeline to another
+organism means editing that file and nothing else.
+Review notes: [`docs/rga/REVIEW_NOTES.md`](docs/rga/REVIEW_NOTES.md).

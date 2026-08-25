@@ -25,6 +25,7 @@ for gtf in "$STRINGTIE_DIR"/*.transcripts.gtf; do
     out_gtf="$OUT_DIR/${sample}.denovo.transcripts.gtf"
 
     echo ">>> Running StringTie (de novo) on $sample"
+    # If the read are stranded, you can add the -rf or -fr option to the command below. Check the StringTie manual for more details.
     stringtie "$bam" \
         -G "$REF_GTF" \
         -o "$out_gtf" \

@@ -1,0 +1,59 @@
+feature	accession	n_hits	status
+(watch only)	IPR041118	0	InterPro: Rx N-terminal domain -- see PF18052 above.
+(watch only)	PF18052	2827	Pfam: Rx N-terminal domain -- the domain-level coiled-coil module of Rx/Gpa2-type plant CNLs. NOT used as CC evidence by default because the specified CC channels are DeepCoil2 (primary) and InterProScan Coils (secondary). See docs/rga/README.md section 4.4: 2611 of the 4023 R570 NLRs carry it, and enabling it as CC evidence moves CNL from 1790 to 2648 under --cc-policy union.
+(watch only)	PTHR33463	412	PANTHER: NB-ARC DOMAIN-CONTAINING PROTEIN-RELATED (family-level, not used as NB-ARC evidence)
+(watch only)	PTHR36766	1378	PANTHER: PLANT BROAD-SPECTRUM MILDEW RESISTANCE PROTEIN RPW8 (family-level, not used as RPW8 evidence). In R570 it hits 1273 of the 4023 NB-ARC proteins: using it as RPW8 evidence would inflate RNL from 7 to ~1273.
+CC	Coil	72088	used
+LRR	G3DSA:3.80.10.10	21512	used
+LRR	IPR001611	22104	used
+LRR	IPR003591	18431	used
+LRR	IPR006553	4175	used
+LRR	IPR013210	2596	used
+LRR	IPR032675	21512	used
+LRR	IPR055414	4482	used
+LRR	IPR057135	336	used
+LRR	PF00560	14738	used
+LRR	PF07723	0	seeded but unused
+LRR	PF07725	0	seeded but unused
+LRR	PF08263	2596	used
+LRR	PF12799	303	used
+LRR	PF13306	31	used
+LRR	PF13516	644	used
+LRR	PF13855	4400	used
+LRR	PF14580	23	used
+LRR	PF23247	336	used
+LRR	PF23598	4482	used
+LRR	PR00019	2956	used
+LRR	PS51450	2322	used
+LRR	SM00365	1868	used
+LRR	SM00367	4175	used
+LRR	SM00369	18431	used
+LRR	SM00370	0	seeded but unused
+LysM	G3DSA:3.10.350.10	189	used
+LysM	IPR018392	657	used
+LysM	IPR036779	308	used
+LysM	PF01476	159	used
+LysM	SM00257	178	used
+LysM	SSF54106	119	used
+LysM	cd00118	141	used
+NB-ARC	IPR002182	4369	used
+NB-ARC	PF00931	4369	used
+NB-ARC	PF05729	0	seeded but unused
+RPW8	IPR008808	7	used
+RPW8	PF05659	0	seeded but unused
+RPW8	PS51153	7	used
+STTK	IPR000719	37744	used
+STTK	IPR001245	9627	used
+STTK	IPR011009	16725	used
+STTK	PF00069	9304	used
+STTK	PF07714	6744	used
+STTK	PS50011	15857	used
+STTK	SM00219	238	used
+STTK	SM00220	12583	used
+TIR	IPR000157	99	used
+TIR	IPR035897	104	used
+TIR	PF01582	15	used
+TIR	PF13676	16	used
+TIR	PS50104	53	used
+TIR	SM00255	15	used
+TIR	SSF52200	51	used
