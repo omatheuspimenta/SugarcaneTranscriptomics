@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import logging
+import shlex
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
@@ -104,6 +105,12 @@ REFERENCES: tuple[tuple[str, str], ...] = (
         "sequences. Science 252:1162-1164.",
         "10.1126/science.252.5009.1162",
     ),
+    (
+        "Simm D, Hatje K, Waack S, Kollmar M (2021). Critical assessment of "
+        "coiled-coil predictions based on protein structure data. Scientific "
+        "Reports 11:12439.",
+        "10.1038/s41598-021-91886-w",
+    ),
 )
 
 
@@ -119,6 +126,10 @@ class Summary:
         Number of proteins with ``is_rga = True``.
     family_counts, subclass_counts : pandas.DataFrame
         Counts and percentages per family / per family+subclass.
+    subclass_confidence : pandas.DataFrame
+        Subclass x confidence cross-table. The headline count of a class and how
+        much of it is trustworthy are different questions, and for TM-CC in
+        particular they have very different answers.
     confidence_counts : pandas.DataFrame
         Counts per confidence level among RGAs.
     architecture_counts : pandas.DataFrame
@@ -134,6 +145,7 @@ class Summary:
     confidence_counts: pd.DataFrame
     architecture_counts: pd.DataFrame
     warning_counts: pd.DataFrame
+    subclass_confidence: pd.DataFrame = field(default_factory=pd.DataFrame)
     extras: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -198,6 +210,7 @@ def summarize(predictions: pd.DataFrame, top_n: int = 20) -> Summary:
         )
         .head(top_n)
     )
+    subclass_confidence = _subclass_confidence(rgas)
     warnings = _warning_counts(predictions)
     LOGGER.info("Summary: %d proteins, %d RGAs", total, len(rgas))
     return Summary(
@@ -206,8 +219,35 @@ def summarize(predictions: pd.DataFrame, top_n: int = 20) -> Summary:
         family_counts=family.reset_index(drop=True),
         subclass_counts=subclass.reset_index(drop=True),
         confidence_counts=confidence.reset_index(drop=True),
+        subclass_confidence=subclass_confidence,
         architecture_counts=architecture.reset_index(drop=True),
         warning_counts=warnings,
+    )
+
+
+def _subclass_confidence(rgas: pd.DataFrame) -> pd.DataFrame:
+    """Cross-tabulate subclass against confidence, largest class first.
+
+    The count of a class and the trustworthiness of that count are separate
+    facts, and reporting only the first invites a reader to quote a number the
+    grading already qualified.
+    """
+    if rgas.empty:
+        return pd.DataFrame(
+            columns=["rga_subclass", "high", "medium", "low", "n_proteins"]
+        )
+    table = (
+        pd.crosstab(rgas["rga_subclass"], rgas["confidence"])
+        .reindex(columns=["high", "medium", "low"], fill_value=0)
+        .reset_index()
+    )
+    table["n_proteins"] = table[["high", "medium", "low"]].sum(axis=1)
+    return (
+        table.sort_values(
+            ["n_proteins", "rga_subclass"], ascending=[False, True], kind="stable"
+        )
+        .reset_index(drop=True)
+        .astype({"high": int, "medium": int, "low": int, "n_proteins": int})
     )
 
 
@@ -336,8 +376,13 @@ def _svg_bars(labels: Sequence[str], values: Sequence[int], width: int = 640) ->
 
 
 _CSS = """
-:root { --fg:#1b1f23; --muted:#6a737d; --line:#e1e4e8; --accent:#2f6f4f; --bg:#ffffff;
-        --card:#f6f8fa; }
+/* A deliberately light-only palette. The report is a printable record that gets
+   screenshotted into slides and pasted into theses, so it renders the same for
+   everyone rather than following the reader's system theme. `color-scheme:light`
+   stops the browser from auto-darkening form controls and scrollbars around it. */
+:root { color-scheme: light;
+        --fg:#1b1f23; --muted:#6a737d; --line:#e1e4e8; --accent:#2f6f4f; --bg:#ffffff;
+        --card:#f6f8fa; --stripe:#fbfcfd; --warn-bg:#fff8e6; --warn-line:#e6c65c; }
 * { box-sizing: border-box; }
 body { margin:0; padding:0 0 4rem; font-family: -apple-system, BlinkMacSystemFont,
        "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:var(--fg);
@@ -352,8 +397,8 @@ h3 { margin-top:1.6rem; font-size:1.02rem; }
 table { border-collapse:collapse; width:100%; font-size:.87rem; }
 th, td { border:1px solid var(--line); padding:.35rem .5rem; text-align:left;
          vertical-align:top; }
-th { background:var(--card); font-weight:600; }
-tbody tr:nth-child(even) { background:#fbfcfd; }
+th { background:var(--card); font-weight:600; position:sticky; top:0; }
+tbody tr:nth-child(even) { background:var(--stripe); }
 .scroll { overflow-x:auto; }
 .muted { color:var(--muted); }
 .card { background:var(--card); border:1px solid var(--line); border-radius:6px;
@@ -368,6 +413,37 @@ tbody tr:nth-child(even) { background:#fbfcfd; }
 .chart .val { font-size:12px; fill:var(--muted); }
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
               font-size:.85em; }
+a { color:var(--accent); }
+nav.toc { background:var(--card); border:1px solid var(--line); border-radius:6px;
+          padding:.8rem 1rem; margin:1.5rem 0; }
+nav.toc ol { margin:.4rem 0 0; padding-left:1.4rem; columns:2; column-gap:2rem; }
+nav.toc li { margin:.15rem 0; font-size:.9rem; }
+pre.cmd { background:var(--card); border:1px solid var(--line); border-radius:6px;
+          padding:.8rem 1rem; overflow-x:auto; font-size:.82rem; line-height:1.5;
+          margin:.6rem 0 1rem; }
+pre.cmd .c { color:var(--muted); }
+nav.toc strong { font-size:.85rem; text-transform:uppercase; letter-spacing:.04em;
+                 color:var(--muted); }
+.note { background:var(--warn-bg); border:1px solid var(--warn-line);
+        border-left-width:4px; border-radius:4px; padding:.8rem 1rem; margin:1rem 0; }
+.note p { margin:.4rem 0; }
+.note p:first-child { margin-top:0; }
+.note p:last-child { margin-bottom:0; }
+.scroll { max-height:32rem; overflow:auto; border:1px solid var(--line);
+          border-radius:4px; }
+.scroll table { border:0; }
+h2 a.anchor { text-decoration:none; color:var(--muted); font-weight:400;
+              opacity:0; padding-left:.4rem; }
+h2:hover a.anchor { opacity:1; }
+.grade-high { color:#1a7f37; font-weight:600; }
+.grade-low  { color:#9a6700; }
+@media print {
+  header { background:none; color:var(--fg); border-bottom:2px solid var(--line); }
+  nav.toc, .scroll { break-inside:avoid; max-height:none; overflow:visible; }
+  h2 { break-after:avoid; }
+  table { font-size:.75rem; }
+  a { text-decoration:none; color:var(--fg); }
+}
 ol.refs li { margin-bottom:.45rem; font-size:.88rem; }
 """
 
@@ -381,8 +457,9 @@ _METHODS = (
     "hits reported by several signature databases for the same region are merged "
     "before anything is counted, so one LRR seen by Pfam, SMART and Gene3D counts "
     "once. Transmembrane helices are taken from Phobius and DeepTMHMM, signal "
-    "peptides from SignalP 6.0 and Phobius, and coiled coils from DeepCoil2 with "
-    "InterProScan Coils as corroboration. A helix predicted inside the signal "
+    "peptides from SignalP 6.0 and Phobius, and coiled coils from three channels: a "
+    "domain-level profile HMM plus the DeepCoil2 and InterProScan Coils predictors. "
+    "A helix predicted inside the signal "
     "peptide is discarded, because signal peptides are routinely mistaken for "
     "transmembrane helices. Each protein is then passed through an ordered list of "
     "mutually exclusive rules and receives the first class that fits, together with "
@@ -392,13 +469,19 @@ _METHODS = (
 )
 
 _CC_NOTE = (
-    "Coiled coils are the least reliable feature in every published RGA pipeline. "
-    "InterProScan's Coils/ncoils module under-detects them, which is why the "
-    "NLRtracker benchmark (Kourelis et al. 2021) reports CC as the domain most "
-    "frequently missed. This pipeline therefore uses DeepCoil2 as the primary "
-    "coiled-coil channel and keeps InterProScan Coils as corroborating evidence. "
-    "The two tables below show how much the two methods disagree, and how sensitive "
-    "the NLR subclass counts are to that choice."
+    "The coiled coil is the least reliable feature in every published RGA pipeline, "
+    "and it is the one that decides CNL against NL. Three channels are used here, "
+    "and they are not of equal weight. The leading one is a curated profile HMM for "
+    "a named domain (the Rx N-terminal domain, PF18052 / IPR041118), which carries "
+    "the same kind of evidence as the NB-ARC model every NLR call already rests on. "
+    "The other two, DeepCoil2 and InterProScan Coils, are biophysical propensity "
+    "predictors: neither publishes a recommended score cut-off, and Simm et al. "
+    "(2021), benchmarking coiled-coil predictors against the whole PDB, found a "
+    "30-fold spread in how many coiled coils they call and agreement with structure "
+    "close to random. They are kept because they cover proteins no domain model "
+    "reaches, and a call resting on them alone is graded down rather than hidden. "
+    "The tables below show how much the channels disagree and how far the subclass "
+    "counts move with the policy."
 )
 
 
@@ -450,7 +533,17 @@ def _md_preamble(ctx: Mapping[str, Any], summary: Summary) -> list[str]:
         "",
         "## 3. Run metadata",
         "",
-        f"- Command: `{ctx['command']}`",
+        "### Reproduce this run",
+        "",
+        "The exact command that produced this report, quoted as it was invoked, so it "
+        "can be pasted back into a shell from the repository root:",
+        "",
+        "```bash",
+        _command_lines(ctx["command"]),
+        "```",
+        "",
+        "### Settings",
+        "",
         f"- Output directory: `{ctx['outdir']}`",
         f"- Consensus policies: TM `{ctx['options']['policies']['tm']}`, "
         f"SP `{ctx['options']['policies']['sp']}`, CC `{ctx['options']['policies']['cc']}`",
@@ -485,6 +578,10 @@ def _md_counts(summary: Summary) -> list[str]:
         "### Confidence of RGA calls",
         "",
         _md_table(summary.confidence_counts),
+        "",
+        "### Confidence by subclass",
+        "",
+        _md_table(summary.subclass_confidence),
         "### Most frequent domain architectures among RGAs",
         "",
         _md_table(summary.architecture_counts),
@@ -519,6 +616,42 @@ def _md_diagnostics(ctx: Mapping[str, Any], summary: Summary) -> list[str]:
         "## 10. References",
         "",
     ]
+
+
+#: HTML section anchors and titles, in page order. One source for the headings
+#: and the table of contents, so the two can never drift apart.
+_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("what", "What this report shows"),
+    ("how", "How the call was made"),
+    ("metadata", "Run metadata"),
+    ("rules", "Rules applied"),
+    ("counts", "Counts"),
+    ("confidence", "How much of each class is trustworthy"),
+    ("cc", "Coiled-coil evidence"),
+    ("ids", "Identifier reconciliation"),
+    ("warnings", "Warnings"),
+    ("top", "Top RGA candidates"),
+    ("refs", "References"),
+)
+
+
+def _section(anchor: str) -> str:
+    """Open one numbered ``<h2>`` with a stable anchor and a self link."""
+    number = [a for a, _ in _SECTIONS].index(anchor) + 1
+    title = dict(_SECTIONS)[anchor]
+    return (
+        f"<h2 id='{anchor}'>{number}. {html.escape(title)}"
+        f"<a class='anchor' href='#{anchor}' aria-label='link to this section'>#</a></h2>"
+    )
+
+
+def _toc() -> str:
+    """Render the table of contents from :data:`_SECTIONS`."""
+    items = "".join(
+        f"<li><a href='#{anchor}'>{html.escape(title)}</a></li>"
+        for anchor, title in _SECTIONS
+    )
+    return f"<nav class='toc'><strong>Contents</strong><ol>{items}</ol></nav>"
 
 
 def render_html(ctx: Mapping[str, Any], summary: Summary) -> str:
@@ -556,16 +689,37 @@ def _html_preamble(ctx: Mapping[str, Any], summary: Summary) -> list[str]:
         _kpi(f"{percent:.2f}%", "of the proteome"),
         _kpi(str(len(ctx["rules"])), "rules applied"),
         "</div>",
-        "<h2>1. What this report shows</h2>",
+        _toc(),
+        _section("what"),
         "<p>Every protein in the proteome was checked for the protein domains and "
         "membrane topology that characterise plant immune receptors. A protein listed "
         "here as an RGA is a <em>candidate</em> identified from sequence features "
         "alone; it is not an experimentally validated resistance gene.</p>",
-        "<h2>2. How the call was made</h2>",
+        "<div class='note'>"
+        "<p><strong>Before quoting a number from this report.</strong></p>"
+        "<p>Counts are per <em>protein</em>. In a polyploid genome the same gene "
+        "appears several times, so treat them as upper bounds and use "
+        "<code>rga_predictions_by_locus.tsv</code> for a locus-level view.</p>"
+        "<p>The classes that depend on a coiled coil &mdash; <code>CNL</code>, "
+        "<code>CN</code> and <code>TM-CC</code> &mdash; move with the "
+        "<code>--cc-policy</code> setting, so state the policy alongside the number. "
+        f"This run used <code>{html.escape(ctx['options']['policies']['cc'])}</code>; "
+        "section 7 shows what the other settings would have given.</p>"
+        "<p><code>TM-CC</code> is a screening bucket rather than a class: it is "
+        "defined by the two least specific features, and section 6 shows how much of "
+        "it the grading already flags as weak.</p>"
+        "</div>",
+        _section("how"),
         f"<p>{html.escape(_METHODS)}</p>",
-        "<h2>3. Run metadata</h2>",
+        _section("metadata"),
+        "<h3>Reproduce this run</h3>",
+        "<p>The exact command that produced this report. It is quoted as it was "
+        "actually invoked, so it can be pasted back into a shell from the repository "
+        "root; the input checksums in <code>run_metadata.json</code> say which files it "
+        "read.</p>",
+        _command_block(ctx["command"]),
+        "<h3>Settings</h3>",
         "<div class='card mono'>",
-        f"<div>command: {html.escape(ctx['command'])}</div>",
         f"<div>output directory: {html.escape(str(ctx['outdir']))}</div>",
         f"<div>policies: TM={html.escape(ctx['options']['policies']['tm'])}, "
         f"SP={html.escape(ctx['options']['policies']['sp'])}, "
@@ -579,7 +733,7 @@ def _html_preamble(ctx: Mapping[str, Any], summary: Summary) -> list[str]:
         _html_table(ctx["inputs"]),
         "<h3>Evidence channels</h3>",
         _html_table(ctx["availability"]),
-        "<h2>4. Rules applied</h2>",
+        _section("rules"),
         _html_table(ctx["rules"]),
     ]
 
@@ -591,41 +745,52 @@ def _html_counts(summary: Summary) -> list[str]:
         summary.subclass_counts["rga_family"] != "Non-RGA"
     ]
     return [
-        "<h2>5. Counts</h2>",
+        _section("counts"),
         "<h3>By family</h3>",
         _svg_bars(list(families["rga_family"]), list(families["n_proteins"])),
         _html_table(families),
         "<h3>By subclass (RGA families only)</h3>",
         _svg_bars(list(subclasses["rga_subclass"]), list(subclasses["n_proteins"])),
         _html_table(summary.subclass_counts),
-        "<h3>Confidence of RGA calls</h3>",
+        "<h3>Most frequent domain architectures among RGAs</h3>",
+        _html_table(summary.architecture_counts),
+        _section("confidence"),
+        "<p>Every call starts at <code>high</code> and is demoted once per triggered "
+        "caveat. A large class that is mostly <code>low</code> is a screening result, "
+        "not a finding; <code>confidence_demotions</code> in "
+        "<code>rga_predictions.tsv</code> names the caveats that fired for each "
+        "protein.</p>",
+        "<h3>Overall</h3>",
         _svg_bars(
             list(summary.confidence_counts["confidence"]),
             list(summary.confidence_counts["n_proteins"]),
         ),
-        "<h3>Most frequent domain architectures among RGAs</h3>",
-        _html_table(summary.architecture_counts),
+        "<h3>By subclass</h3>",
+        _html_table(summary.subclass_confidence),
     ]
 
 
 def _html_diagnostics(ctx: Mapping[str, Any], summary: Summary) -> list[str]:
     """Coiled-coil diagnostics, identifier reconciliation, warnings, references."""
     return [
-        "<h2>6. Coiled-coil evidence</h2>",
+        _section("cc"),
         f"<p>{html.escape(_CC_NOTE)}</p>",
-        "<h3>DeepCoil2 versus InterProScan Coils (whole proteome)</h3>",
+        "<h3>Channel agreement (whole proteome)</h3>",
         _html_table(ctx["cc_contingency_table"]),
         "<h3>Subclass counts under each --cc-policy</h3>",
         _html_table(ctx["cc_policy_counts"]),
         "<h3>Sensitivity to the segment-calling parameters</h3>",
         _html_table(ctx["cc_sensitivity"]),
-        "<h2>7. Identifier reconciliation</h2>",
+        _section("ids"),
         _html_table(ctx["id_report"]),
-        "<h2>8. Warnings</h2>",
+        _section("warnings"),
         _html_table(summary.warning_counts),
-        f"<h2>9. Top {len(ctx['top_rgas'])} RGA candidates</h2>",
+        _section("top"),
+        f"<p class='muted'>The {len(ctx['top_rgas'])} highest-confidence, "
+        "longest RGA candidates. The complete table is "
+        "<code>rga_predictions.tsv</code>.</p>",
         _html_table(ctx["top_rgas"]),
-        "<h2>10. References</h2>",
+        _section("refs"),
         "<ol class='refs'>",
         *(
             f"<li>{html.escape(text)} "
@@ -635,6 +800,30 @@ def _html_diagnostics(ctx: Mapping[str, Any], summary: Summary) -> list[str]:
         "</ol>",
         "</div>",
     ]
+
+
+def _command_lines(command: str) -> str:
+    """Wrap a command one flag per line, for a fenced code block."""
+    parts = shlex.split(command)
+    lines: list[str] = []
+    current = "uv run python"
+    for part in parts:
+        if part.startswith("--"):
+            lines.append(current)
+            current = "    " + part
+        else:
+            current = f"{current} {shlex.quote(part)}"
+    lines.append(current)
+    return " \\\n".join(lines)
+
+
+def _command_block(command: str) -> str:
+    """Render a command as a copy-pasteable block, wrapped at each flag.
+
+    One flag per line with a trailing backslash: long enough to be unreadable on
+    one line, and this is the form a reader is meant to paste back.
+    """
+    return f"<pre class='cmd'>{html.escape(_command_lines(command))}</pre>"
 
 
 def _kpi(number: str, text: str) -> str:

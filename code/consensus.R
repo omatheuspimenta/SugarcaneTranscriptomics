@@ -25,6 +25,7 @@ library(readr)
 library(dplyr)
 library(purrr)
 library(pROC)
+library(UpSetR)
 
 ## ---------------------------
 
@@ -358,3 +359,52 @@ lncRNA_final_ids <- merged %>%
 
 ## Save the high confidence lncRNA IDs to a text file
 writeLines(lncRNA_final_ids, "../../data/lncRNA_final_ids.txt")
+
+## upSetPlot
+
+## Compare the lncRNA calls of the five tools with an UpSet plot, i.e. how many
+## transcripts are called lncRNA by each tool and by each intersection of tools.
+# Binary membership matrix: 1 if the tool called the transcript as lncRNA
+upset_data <- merged %>%
+  transmute(
+    transcript,
+    CPC2      = as.integer(cpc2_pred == "lncRNA"),
+    LncADeep2 = as.integer(lncadeep_pred == "lncRNA"),
+    RNAplonc  = as.integer(rnaplonc_pred == "lncRNA"),
+    RNAsamba  = as.integer(rnasamba_pred == "lncRNA"),
+    FEELnc    = as.integer(feelnc_pred == "lncRNA")
+  ) %>%
+  mutate(across(-transcript, ~ replace(.x, is.na(.x), 0L))) %>%
+  as.data.frame()
+
+tools <- c("CPC2", "LncADeep2", "RNAplonc", "RNAsamba", "FEELnc")
+
+upset_plot <- function() {
+  upset(
+    upset_data,
+    sets = tools,
+    keep.order = TRUE,
+    order.by = "freq",
+    nintersects = NA,
+    mainbar.y.label = "lncRNA transcripts in intersection",
+    sets.x.label = "lncRNA transcripts per tool",
+    main.bar.color = "steelblue4",
+    sets.bar.color = "#D55E00",
+    matrix.color = "steelblue4",
+    shade.color = "grey80",
+    point.size = 3,
+    line.size = 1,
+    text.scale = c(1.3, 1.2, 1.2, 1, 1.3, 1.1)
+  )
+}
+
+upset_plot()
+
+## Save the UpSet plot
+dir.create("../../results/lncRNA", recursive = TRUE, showWarnings = FALSE)
+pdf("../../results/lncRNA/upset_lncRNA.pdf",
+    width = 10,
+    height = 6,
+    onefile = FALSE)
+upset_plot()
+dev.off()

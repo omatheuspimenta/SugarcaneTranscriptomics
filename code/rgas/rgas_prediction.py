@@ -7,7 +7,7 @@ mutually exclusive classification rules, and writes machine-readable tables, a
 human-readable report and a reproducibility record.
 
 Nothing in this file is specific to sugarcane or to any particular tool version:
-every accession, threshold and rule lives in ``code/config/rga_config.yaml``.
+every accession, threshold and rule lives in ``code/rgas/config/rga_config.yaml``.
 
 Examples
 --------
@@ -38,6 +38,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 import platform
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -295,7 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     consensus_group.add_argument(
         "--cc-policy",
         metavar="POLICY",
-        choices=["deepcoil", "union", "intersection", "coils"],
+        choices=["rx_domain", "deepcoil", "coils", "union", "intersection"],
         help="coiled-coil prediction policy",
     )
     consensus_group.add_argument(
@@ -770,6 +771,20 @@ def accession_audit(cfg: Config, counts) -> pd.DataFrame:
                     "status": "used" if hits else "seeded but unused",
                 }
             )
+    # The domain-level CC channel is configured outside `interproscan_features`
+    # (it is not one of the nine features), so it needs its own pass here --
+    # otherwise the accessions that now drive the CNL count would be the only
+    # evidence accessions missing from the audit.
+    for accession in cfg.cc_domain_accessions():
+        hits = int(counts.get(accession, 0))
+        rows.append(
+            {
+                "feature": "CC (domain channel)",
+                "accession": accession,
+                "n_hits": hits,
+                "status": "used" if hits else "seeded but unused",
+            }
+        )
     for accession, note in cfg.raw.get("watch_accessions", {}).items():
         rows.append(
             {
@@ -1165,15 +1180,35 @@ def _build_context(
         input_rows.append(record)
 
     contingency = ev.cc_contingency
+    # The 2x2 block compares the two propensity predictors; the two trailing
+    # rows report the domain-level channel, which is a different kind of
+    # evidence and is therefore counted beside them rather than folded in.
     contingency_table = pd.DataFrame(
         {
-            "InterProScan Coils": ["CC called", "no CC", "CC called", "no CC"],
-            "DeepCoil2": ["CC called", "CC called", "no CC", "no CC"],
+            "InterProScan Coils": [
+                "CC called",
+                "no CC",
+                "CC called",
+                "no CC",
+                "--",
+                "no CC",
+            ],
+            "DeepCoil2": [
+                "CC called",
+                "CC called",
+                "no CC",
+                "no CC",
+                "--",
+                "no CC",
+            ],
+            "Rx domain": ["--", "--", "--", "--", "CC called", "CC called"],
             "n_proteins": [
                 contingency["both"],
                 contingency["deepcoil_only"],
                 contingency["coils_only"],
                 contingency["neither"],
+                contingency["rx_domain"],
+                contingency["rx_domain_only"],
             ],
         }
     )
@@ -1191,7 +1226,11 @@ def _build_context(
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "version": __version__,
         "config_version": cfg.raw["config_version"],
-        "command": " ".join(sys.argv),
+        # shlex.join, not " ".join: an organism name with spaces has to come back
+        # out quoted or the recorded command is not the command that ran.
+        "command": shlex.join(
+            [_SCRIPT_PATH, *getattr(args, "invoked_with", sys.argv[1:])]
+        ),
         "outdir": str(outdir),
         "options": options,
         "inputs": pd.DataFrame(input_rows),
@@ -1325,9 +1364,23 @@ def _write_outputs(
     LOGGER.info("wrote report.md, report.html and run_metadata.json")
 
 
+#: How this script names itself in the recorded command. Taken from the file
+#: rather than from ``sys.argv[0]``, which is the *host* program's path whenever
+#: ``main`` is called programmatically -- pytest, a notebook, a Nextflow wrapper.
+_SCRIPT_PATH = "code/rgas/rgas_prediction.py"
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Parse the command line and run the pipeline."""
+    """Parse the command line and run the pipeline.
+
+    ``argv`` is recorded on the parsed arguments so that the "Reproduce this
+    run" block in the report quotes the arguments this call actually received.
+    Reading ``sys.argv`` instead would be right in production and wrong whenever
+    ``main`` is called programmatically -- from a test, a notebook, or a
+    Nextflow wrapper -- which is exactly where a misleading command hurts.
+    """
     args = build_parser().parse_args(argv)
+    args.invoked_with = list(argv) if argv is not None else sys.argv[1:]
     return run(args)
 
 

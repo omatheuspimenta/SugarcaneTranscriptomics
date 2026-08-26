@@ -21,7 +21,7 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
-from .config import Config
+from .config import CC_DOMAIN_FEATURE, Config
 from .progress import (
     PROTEIN_REPORT_INTERVAL,
     ProgressCallback,
@@ -269,6 +269,46 @@ def cc_sensitivity(
 # ---------------------------------------------------------------------------
 
 
+def apply_cc_policy(policy: str, channels: dict[str, bool | None]) -> bool:
+    """Combine the three coiled-coil channels according to ``--cc-policy``.
+
+    The CC channels are not interchangeable and the policy names say which is
+    which: ``rx_domain`` is the domain-level profile HMM channel,
+    ``deepcoil`` and ``coils`` are the two propensity predictors. ``union`` and
+    ``intersection`` range over every channel that is available.
+
+    As in :func:`apply_policy`, a channel whose tool was not supplied is
+    ``None``: it counts as "no evidence" for ``union`` and is skipped for
+    ``intersection``, so a missing tool can never silently veto a call. Naming a
+    single unavailable channel falls back to the union of the rest rather than
+    returning a blanket ``False``.
+
+    Parameters
+    ----------
+    policy : {'rx_domain', 'deepcoil', 'coils', 'union', 'intersection'}
+        The configured or overridden CC policy.
+    channels : dict
+        ``{'rx_domain': ..., 'deepcoil': ..., 'coils': ...}``, each ``bool`` or
+        ``None``.
+
+    Returns
+    -------
+    bool
+        The consensus CC call.
+    """
+    if policy in channels:
+        selected = channels[policy]
+        if selected is not None:
+            return bool(selected)
+        policy = "union"
+    available = [value for value in channels.values() if value is not None]
+    if not available:
+        return False
+    if policy == "intersection":
+        return all(available)
+    return any(available)
+
+
 def apply_policy(policy: str, first: bool | None, second: bool | None) -> bool:
     """Combine two boolean channels according to a consensus policy.
 
@@ -352,6 +392,9 @@ class Evidence:
         One row per protein x feature x supporting hit.
     available : dict
         Channel name -> whether the corresponding tool output was supplied.
+    domain_descriptions : dict
+        Accession -> signature description, used to render the integrated-domain
+        columns in words as well as accessions.
     cc_contingency : dict
         2x2 counts of DeepCoil2 versus InterProScan Coils CC calls.
     raw_cc : dict
@@ -362,6 +405,7 @@ class Evidence:
     available: dict[str, bool]
     records: list[dict] = field(default_factory=list)
     cc_contingency: dict[str, int] = field(default_factory=dict)
+    domain_descriptions: dict[str, str] = field(default_factory=dict)
     raw_cc: dict[str, list[tuple[int, int, float]]] = field(default_factory=dict)
 
 
@@ -470,6 +514,40 @@ def _group_hit_labels(
     return labels
 
 
+def _group_accessions(hits: pd.DataFrame) -> dict[str, dict[str, list[str]]]:
+    """Map each protein to the sorted accessions supporting each of its features.
+
+    This is the machine-readable sibling of :func:`_group_hit_labels`: no
+    coordinates, no truncation, so a reader can filter ``feature_accessions``
+    in a spreadsheet without parsing prose out of ``reason``.
+    """
+    collected: dict[str, dict[str, set[str]]] = {}
+    for protein_id, feature, accession in zip(
+        hits["protein_id"], hits["feature"], hits["accession"]
+    ):
+        collected.setdefault(protein_id, {}).setdefault(feature, set()).add(accession)
+    return {
+        protein_id: {feature: sorted(values) for feature, values in features.items()}
+        for protein_id, features in collected.items()
+    }
+
+
+def _domain_descriptions(domain_hits: pd.DataFrame) -> dict[str, str]:
+    """Accession -> signature description, for the integrated-domain columns.
+
+    Built before ``domain_hits`` is released. It is a few thousand entries for a
+    whole proteome, so it costs nothing to keep and turns ``PF03106`` in the
+    output into ``WRKY DNA-binding domain`` for the reader.
+    """
+    return {
+        str(accession): str(description)
+        for accession, description in zip(
+            domain_hits["accession"], domain_hits["signature_description"]
+        )
+        if description and description != "-"
+    }
+
+
 def _noncanonical_pfam(
     domain_hits: pd.DataFrame, canonical: set[str]
 ) -> dict[str, list[str]]:
@@ -572,6 +650,7 @@ def build_evidence(
     )
     databases = _group_databases(ips.hits)
     hit_labels = _group_hit_labels(ips.hits)
+    hit_accessions = _group_accessions(ips.hits)
     canonical_features = set(cfg.raw["integrated_domain_canonical_features"])
     canonical = {
         accession
@@ -580,6 +659,7 @@ def build_evidence(
     }
     canonical |= {str(a) for a in cfg.raw["integrated_domain_exclusions"]}
     integrated = _noncanonical_pfam(ips.domain_hits, canonical)
+    domain_descriptions = _domain_descriptions(ips.domain_hits)
     # The Pfam hit table is only needed for the integrated-domain scan; release it
     # before building 300k evidence records.
     ips.domain_hits = ips.domain_hits.iloc[0:0]
@@ -603,6 +683,7 @@ def build_evidence(
                 repeat_intervals,
                 databases,
                 hit_labels,
+                hit_accessions,
                 integrated,
                 raw_cc,
                 lookups,
@@ -624,6 +705,7 @@ def build_evidence(
         records=rows,
         cc_contingency=contingency,
         raw_cc=raw_cc,
+        domain_descriptions=domain_descriptions,
     )
 
 
@@ -635,6 +717,7 @@ def _protein_row(
     repeat_intervals: dict[str, dict[str, list[Interval]]],
     databases: dict[str, dict[str, int]],
     hit_labels: dict[str, dict[str, str]],
+    hit_accessions: dict[str, dict[str, list[str]]],
     integrated: dict[str, list[str]],
     raw_cc: dict[str, list[tuple[int, int, float]]],
     lookups: dict[str, dict],
@@ -657,6 +740,18 @@ def _protein_row(
     row["noncanonical_domains"] = integrated.get(protein_id, [])
     row["feature_databases"] = databases.get(protein_id, {})
     row["feature_hit_labels"] = hit_labels.get(protein_id, {})
+    # Fold the domain-level CC channel into `CC`: `CC_domain` is an internal
+    # pseudo-feature and must not surface in the output as if it were a tenth
+    # feature. DeepCoil2 contributes no accession -- it is a predictor, not a
+    # signature -- so a CC called by DeepCoil2 alone has coordinates but no
+    # accessions, which `cc_source` disambiguates.
+    accessions = dict(hit_accessions.get(protein_id, {}))
+    cc_accessions = sorted(
+        set(accessions.pop(CC_DOMAIN_FEATURE, [])) | set(accessions.get("CC", []))
+    )
+    if cc_accessions:
+        accessions["CC"] = cc_accessions
+    row["feature_accessions"] = accessions
     row["feature_intervals"] = {
         **{feature: values for feature, values in domains.items() if feature != "CC"},
         "CC": row["cc_intervals"],
@@ -689,6 +784,8 @@ def _domain_fields(
     fields["n_lrr_repeats"] = len(repeats.get("LRR", []))
     fields["cc_coils"] = bool(domains.get("CC"))
     fields["coils_intervals"] = domains.get("CC", [])
+    fields["cc_rx_domain"] = bool(domains.get(CC_DOMAIN_FEATURE))
+    fields["rx_domain_intervals"] = domains.get(CC_DOMAIN_FEATURE, [])
     return fields
 
 
@@ -794,7 +891,15 @@ def _cc_fields(
     available: dict[str, bool],
     row: dict,
 ) -> dict:
-    """Coiled-coil evidence from DeepCoil2 and InterProScan Coils."""
+    """Coiled-coil evidence from all three CC channels.
+
+    The channels are, in descending order of evidential weight: ``rx_domain``
+    (a curated profile HMM for a named domain), ``deepcoil`` (a learned
+    per-residue propensity predictor) and ``coils`` (the 1991 Lupas algorithm).
+    ``cc_source`` names every channel that fired, and the reported coordinates
+    come from the most precise channel that did: DeepCoil2 resolves a segment
+    per residue, whereas the domain and Coils channels report a signature span.
+    """
     called = call_cc_segments(
         raw_cc.get(protein_id, []),
         options["cc_threshold"],
@@ -803,20 +908,32 @@ def _cc_fields(
     )
     cc_deepcoil = called.n > 0 if available["deepcoil"] else None
     cc_coils = bool(row.get("cc_coils"))
-    policy = {"deepcoil": "first", "coils": "second"}.get(
-        options["policies"]["cc"], options["policies"]["cc"]
-    )
-    consensus = apply_policy(policy, cc_deepcoil, cc_coils)
+    cc_rx_domain = bool(row.get("cc_rx_domain"))
+    channels: dict[str, bool | None] = {
+        "rx_domain": cc_rx_domain,
+        "deepcoil": cc_deepcoil,
+        "coils": cc_coils,
+    }
+    consensus = apply_cc_policy(options["policies"]["cc"], channels)
 
+    # A single contributor keeps the "<channel>_only" spelling the confidence
+    # rules and the reports have always used; two or more are joined with "+"
+    # in the fixed channel order above, strongest evidence first.
+    contributing = [name for name, value in channels.items() if value]
+    if not contributing:
+        source = None
+    elif len(contributing) == 1:
+        source = f"{contributing[0]}_only"
+    else:
+        source = "+".join(contributing)
     if available["deepcoil"] and called.n:
         segments = called.intervals
-        source = "deepcoil+coils" if cc_coils else "deepcoil_only"
+    elif cc_rx_domain:
+        segments = domains.get(CC_DOMAIN_FEATURE, [])
     elif cc_coils:
         segments = domains.get("CC", [])
-        source = "coils_only"
     else:
         segments = []
-        source = None
 
     nbarc = domains.get("NB-ARC", [])
     nbarc_start = min((s for s, _ in nbarc), default=None)
@@ -827,6 +944,7 @@ def _cc_fields(
     )
     return {
         "cc_deepcoil": cc_deepcoil,
+        "cc_rx_domain": cc_rx_domain,
         "cc_consensus": consensus,
         "feat_CC": consensus,
         "cc_source": source,
@@ -835,6 +953,12 @@ def _cc_fields(
         "cc_mean_prob_in_segments": called.mean_prob,
         "cc_total_length": called.total_length,
         "cc_intervals": segments,
+        # The long evidence table must attribute every interval to the channel
+        # that produced it. ``cc_intervals`` is whichever channel called this
+        # protein, so DeepCoil2's own segments are kept separately; otherwise a
+        # CC called by the domain model alone would be exported as a DeepCoil2
+        # hit, which is the provenance bug review finding 5 fixed for reasons.
+        "deepcoil_intervals": called.intervals if available["deepcoil"] else [],
         "cc_is_n_terminal": (
             all(end < nbarc_start for _, end in segments)
             if segments and nbarc_start is not None
@@ -860,11 +984,29 @@ def _deeploc_fields(lookups: dict, protein_id: str, available: dict[str, bool]) 
 
 
 def _contingency(records: list[dict]) -> dict[str, int]:
-    """2x2 contingency table of DeepCoil2 versus InterProScan Coils CC calls."""
-    counts = {"both": 0, "deepcoil_only": 0, "coils_only": 0, "neither": 0}
+    """Agreement between the CC channels.
+
+    The four ``both``/``*_only``/``neither`` cells are the 2x2 table of the two
+    *predictors*, kept comparable across configuration versions. The domain
+    channel is counted alongside them rather than folded in, because it answers
+    a different question -- how often a curated CC domain model fires where the
+    predictors do or do not.
+    """
+    counts = {
+        "both": 0,
+        "deepcoil_only": 0,
+        "coils_only": 0,
+        "neither": 0,
+        "rx_domain": 0,
+        "rx_domain_only": 0,
+    }
     for row in records:
         deepcoil = bool(row.get("cc_deepcoil"))
         coils = bool(row.get("cc_coils"))
+        if row.get("cc_rx_domain"):
+            counts["rx_domain"] += 1
+            if not deepcoil and not coils:
+                counts["rx_domain_only"] += 1
         key = (
             "both"
             if deepcoil and coils
@@ -898,11 +1040,11 @@ def _build_long(ips, records: list[dict], available: dict[str, bool]) -> pd.Data
 
 #: Wide-table interval columns exported to the long evidence table.
 _INTERVAL_SOURCES: tuple[tuple[str, str, str, str], ...] = (
-    ("cc_intervals", "DeepCoil2", "deepcoil2", "CC"),
+    ("deepcoil_intervals", "DeepCoil2", "deepcoil2", "CC"),
     ("tm_intervals", "Phobius/DeepTMHMM", "tm_consensus", "TM"),
 )
 
-_INTERVAL_CHANNEL = {"cc_intervals": "deepcoil", "tm_intervals": "deeptmhmm"}
+_INTERVAL_CHANNEL = {"deepcoil_intervals": "deepcoil", "tm_intervals": "deeptmhmm"}
 
 
 def _interval_rows(

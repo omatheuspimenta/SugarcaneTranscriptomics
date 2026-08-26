@@ -112,3 +112,28 @@ def test_normalize_id(raw_id, ops, expected):
 def test_rstrip_suffixes():
     """TransDecoder-style suffixes can be removed when configured."""
     assert normalize_id("PROT.1.p1", ["rstrip_suffixes"], [".p1"]) == "PROT.1"
+
+
+def test_no_accession_is_both_evidence_and_watch_only(cfg):
+    """`watch_accessions` means "counted, never used"; using one as evidence too
+    would make the audit table contradict itself."""
+    evidence = {
+        str(accession)
+        for accessions in cfg.raw["interproscan_features"].values()
+        for accession in accessions
+    }
+    evidence |= set(cfg.cc_domain_accessions())
+    clash = sorted(evidence & {str(a) for a in cfg.raw.get("watch_accessions", {})})
+    assert not clash, f"accessions used as evidence and also watch-only: {clash}"
+
+
+def test_nacht_is_not_nb_arc_evidence(cfg):
+    """NACHT (PF05729/IPR007111) is a distinct NTPase domain from NB-ARC.
+
+    Treating it as NB-ARC would report NACHT proteins as NLRs with an NB-ARC
+    domain. Harmless in R570 (0 hits) but wrong for any fungal or animal
+    proteome, so it is pinned rather than left to a comment.
+    """
+    nb_arc = {str(a) for a in cfg.raw["interproscan_features"]["NB-ARC"]}
+    assert not nb_arc & {"PF05729", "IPR007111"}
+    assert "PF05729" in cfg.raw["watch_accessions"]

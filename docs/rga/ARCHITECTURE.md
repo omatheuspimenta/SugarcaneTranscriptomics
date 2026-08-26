@@ -5,9 +5,9 @@ Companion to [`README.md`](README.md) (how to *use* the pipeline) and
 This document explains **what the pipeline is made of, why it is built that way, and
 how each part works**.
 
-Everything below describes code in this repository at version **1.0.0**
-(`code/rgas_prediction.py`, package `code/rga/`, configuration
-`code/config/rga_config.yaml` v1.0.0). Numbers quoted as "reference run" come from the
+Everything below describes code in this repository at version **0.0.1**
+(`code/rgas/rgas_prediction.py`, package `code/rgas/rga/`, configuration
+`code/rgas/config/rga_config.yaml` v0.0.1). Numbers quoted as "reference run" come from the
 *Saccharum officinarum × spontaneum* R570 proteome shipped in `data/rgas/`
 (299,731 proteins) and are reproduced in `results/rgas/SaccharumR570/run_metadata.json`.
 
@@ -59,11 +59,11 @@ flowchart LR
         DC["DeepCoil2<br/>*.out per protein<br/>(dirs or .tar.xz)"]
     end
 
-    subgraph CFG["code/config/"]
+    subgraph CFG["code/rgas/config/"]
         YAML["rga_config.yaml<br/>accessions · thresholds · rules"]
     end
 
-    subgraph PIPE["code/rgas_prediction.py + code/rga/"]
+    subgraph PIPE["code/rgas/rgas_prediction.py + code/rgas/rga/"]
         P1["parse"] --> P2["reconcile IDs"] --> P3["build evidence"]
         P3 --> P4["classify"] --> P5["grade + explain"] --> P6["report"]
     end
@@ -123,12 +123,12 @@ Solid arrows are data flow; dotted arrows are "reads configuration from".
 
 | Module | Lines | Responsibility | Deliberately *not* its job |
 |--------|-------|----------------|----------------------------|
-| `rgas_prediction.py` | 1,246 | Argument parsing, input discovery, file fingerprints, ID reconciliation, orchestration, invariants, writing all 12 outputs | Any biological decision |
-| `rga/config.py` | 361 | Read/validate YAML; expand the `ECTODOMAIN_FEATURES` token; ID normalisation primitives | Knowing what a domain *means* |
-| `rga/parsers.py` | 777 | Turn six heterogeneous formats into tidy frames with one coordinate convention | Interpreting features, applying thresholds |
-| `rga/evidence.py` | 917 | Feature calling, consensus policies, interval merging, LRR copy number, CC segment calling, the long evidence table | Assigning classes |
-| `rga/rules.py` | 757 | Ordered matching, exclusivity proof, architecture string, confidence grading, reason generation | Reading files, writing files |
-| `rga/report.py` | 645 | The one `Summary`; Markdown/HTML rendering; bibliography | Recomputing any count |
+| `rgas_prediction.py` | 1,355 | Argument parsing, input discovery, file fingerprints, ID reconciliation, orchestration, invariants, writing all 12 outputs | Any biological decision |
+| `rga/config.py` | 405 | Read/validate YAML; expand the `ECTODOMAIN_FEATURES` token; ID normalisation primitives | Knowing what a domain *means* |
+| `rga/parsers.py` | 862 | Turn six heterogeneous formats into tidy frames with one coordinate convention | Interpreting features, applying thresholds |
+| `rga/evidence.py` | 1,018 | Feature calling, consensus policies, interval merging, LRR copy number, CC segment calling, the long evidence table | Assigning classes |
+| `rga/rules.py` | 804 | Ordered matching, exclusivity proof, architecture string, confidence grading, reason generation | Reading files, writing files |
+| `rga/report.py` | 651 | The one `Summary`; Markdown/HTML rendering; bibliography | Recomputing any count |
 | `rga/progress.py` | 51 | The `ProgressCallback` protocol and its no-op default | Knowing that `rich` exists |
 
 ### 3.1 Progress reporting across the layer boundary
@@ -212,7 +212,7 @@ sequenceDiagram
 Two ordering choices are deliberate:
 
 - **The rule set is proved consistent before the first byte of data is read** (step 3).
-  A configuration error costs a millisecond, not the 20 minutes it takes to parse an
+  A configuration error costs a millisecond, not the minute it takes to parse an
   InterProScan TSV of this size.
 - **Invariants are asserted before anything is written** (step 14). The pipeline either
   writes a complete, self-consistent result set or writes nothing at all.
@@ -317,7 +317,7 @@ flowchart LR
     subgraph MULTI["multi-tool channels — consensus policy applies"]
         t1["TM ← Phobius ∪ DeepTMHMM  <i>(--tm-policy)</i>"]
         s1["SP ← SignalP 6.0  <i>(--sp-policy)</i>"]
-        c1["CC ← DeepCoil2  <i>(--cc-policy)</i>, InterProScan Coils secondary"]
+        c1["CC ← Rx domain HMM · DeepCoil2 · Coils  <i>(--cc-policy)</i>"]
     end
     subgraph SUP["supporting only — never a criterion"]
         l1["DeepLoc 2.0 label + probability"]
@@ -330,6 +330,19 @@ flowchart LR
 The controlled vocabulary is exactly:
 `NB-ARC`, `TIR`, `RPW8`, `CC`, `LRR`, `STTK`, `LysM`, `TM`, `SP`
 — nine features, hence the 2⁹ exhaustive proof in §9.
+
+**The CC channel is three channels.** Eight of the nine features come from curated domain
+models; earlier revisions took the ninth only from propensity predictors, which is what made
+`CNL` the least defensible number the pipeline produced. The domain-level channel
+(`PF18052`/`IPR041118`, the Rx N-terminal domain) is now the leading CC evidence, with
+DeepCoil2 and InterProScan Coils retained beside it and recorded separately. The full
+argument, and the R570 measurements behind it, are in
+[README §5.4](README.md#54-coiled-coils--three-channels-and-why-the-domain-model-leads).
+
+The channel is kept out of the nine-feature vocabulary deliberately: it enters as the
+reserved pseudo-feature `CC_domain` (`rga.config.CC_DOMAIN_FEATURE`), which feeds the
+`cc_rx_domain` evidence column and nothing else. It never reaches a rule, so it does not
+enlarge the 2⁹ exclusivity proof and creates no `feat_` column of its own.
 
 **Core immune features** (what makes a protein an RGA candidate at all) are
 `NB-ARC, TIR, RPW8, LRR, STTK, LysM`. **`CC` is deliberately excluded** from that set: a
@@ -346,12 +359,17 @@ Each multi-tool channel resolves through `apply_policy()`:
 |---------|----------|---------|-----------------|---------------------------|
 | TM | `--tm-policy` | `union` | `union`, `intersection`, `deeptmhmm`, `phobius` | The two predictors disagree at the margins; for a *screen*, recall matters more than precision, and the CC/TM cross-talk flag catches the resulting ambiguity downstream |
 | SP | `--sp-policy` | `signalp` | `union`, `intersection`, `signalp`, `phobius` | SignalP 6.0 is the stronger dedicated predictor; Phobius SP is retained as a cross-check |
-| CC | `--cc-policy` | `deepcoil` | `deepcoil`, `union`, `intersection`, `coils` | DeepCoil2 is a modern learned predictor; the InterProScan Coils signature is the 1991 Lupas algorithm, kept as a secondary channel |
+| CC | `--cc-policy` | `union` | `rx_domain`, `deepcoil`, `coils`, `union`, `intersection` | A curated domain model outranks a propensity score, and neither predictor has a benchmarked operating point (Simm et al. 2021). `union` keeps the two predictors contributing where the domain model is silent |
 
 Because the policy is a knob and not a hard-coded choice, its effect is *measurable*:
-`cc_policy_sensitivity.tsv` reports the subclass counts under **all four** CC policies from
-a single run, and `report.md` carries the 2×2 DeepCoil2 × Coils contingency table
-(reference run: both 14,165 · DeepCoil2-only 4,579 · Coils-only 28,135 · neither 252,852).
+`cc_policy_sensitivity.tsv` reports the subclass counts under **all five** CC policies from
+a single run, and `report.md` carries the channel-agreement table (reference run: both
+predictors 14,165 · DeepCoil2-only 4,579 · Coils-only 28,135 · neither 252,852 · Rx domain
+2,827, of which 1,056 with no predictor support).
+
+`union` and `intersection` now range over three channels, so their columns are **not**
+comparable with the same-named columns of a two-channel run. The config version travels in
+`run_metadata.json` for exactly this reason.
 
 ### 8.3 Coiled-coil segment calling
 
@@ -422,7 +440,7 @@ while classification itself stayed correct: the worst kind of bug, invisible in 
 numbers. Iterating `records` (plain dicts, arbitrary keys) removes the failure mode
 entirely, and halves peak memory as a side effect.
 
-The long table is the audit trail: 548,086 rows in the reference run, and it is what §11's
+The long table is the audit trail: 518,059 rows in the reference run, and it is what §11's
 spot-check traces run against.
 
 ---
@@ -458,7 +476,7 @@ flowchart TD
 ```
 
 19 rules, priorities 1–19. The full table with descriptions is
-[README §5.2](README.md#52-the-rule-table).
+[README §6.2](README.md#62-the-rule-table).
 
 ### 9.2 Why an ordered list rather than `if/elif`
 
@@ -503,9 +521,15 @@ Every call starts at `high` and is demoted by rules declared in `confidence.demo
 
 | Demotion | Steps | Fires when |
 |----------|-------|-----------|
-| `cc_deepcoil_only` | 1 | A CC-dependent class (CNL, CN, TM-CC) rests on DeepCoil2 without Coils agreement |
-| `cc_coils_only` | 2 | The CC rests only on the 1991 Coils signature |
+| `cc_deepcoil_only` | 1 | A CC-dependent class (CNL, CN, TM-CC) rests on DeepCoil2 alone — **no CC domain model** and no Coils agreement |
+| `cc_coils_only` | 2 | **No CC domain model**, and the CC rests only on the 1991 Coils signature |
 | `cc_tm_ambiguous` | 2 | A CC segment overlaps a TM helix |
+
+Both predictor-only demotions carry `cc_rx_domain: false`, so **a CC backed by the domain
+model is never demoted for its CC**. That is the evidence hierarchy stated as
+configuration rather than as prose: grading a `PF18052` hit down while trusting the
+`PF00931` hit that made the same protein an NLR would be incoherent. In the reference run
+this leaves 1,617 of the 2,648 `CNL` calls at `high`, 782 at `medium` and 249 at `low`.
 | `cc_not_n_terminal` | 1 | The CC lies C-terminal to NB-ARC, unlike canonical CNLs |
 | `deeploc_inconsistent` | 1 | DeepLoc contradicts the assigned class |
 | `missing_channel` | 2 | The call depended on a channel whose tool was not supplied |
@@ -529,7 +553,7 @@ easy to get wrong and are covered by tests:
 - A `Non-RGA` protein that nonetheless carries features says *which* features were found,
   instead of the false "no positive domain evidence".
 
-A worked example per class is in [README §5.3](README.md#53-one-worked-example-per-class).
+A worked example per class is in [README §6.3](README.md#63-one-worked-example-per-class).
 
 ---
 
@@ -538,13 +562,13 @@ A worked example per class is in [README §5.3](README.md#53-one-worked-example-
 | File | Grain | Purpose |
 |------|-------|---------|
 | `rga_predictions.tsv` | 1 row / protein (299,731) | The result. Every input protein, RGA or not |
-| `rga_predictions_rga_only.tsv` | 1 row / RGA (29,151) | Convenience subset |
+| `rga_predictions_rga_only.tsv` | 1 row / RGA (33,296) | Convenience subset |
 | `rga_predictions_by_locus.tsv` | 1 row / locus (194,593) | Isoform-collapsed view; longest protein represents the locus, ties broken by ID |
-| `rga_domain_evidence_long.tsv` | 1 row / evidence item (548,086) | Audit trail behind every call |
+| `rga_domain_evidence_long.tsv` | 1 row / evidence item (518,059) | Audit trail behind every call |
 | `rga_summary_counts.tsv` | 1 row / class | Counts and percentages |
 | `accession_audit.tsv` | 1 row / accession | Hit count per configured accession — reveals dead or over-firing accessions |
 | `cc_segment_sensitivity.tsv` | 1 row / parameter grid point | CC calls under alternative threshold/length settings |
-| `cc_policy_sensitivity.tsv` | 1 row / (policy, class) | Subclass counts under all four CC policies |
+| `cc_policy_sensitivity.tsv` | 1 row / (policy, class) | Subclass counts under all five CC policies |
 | `unmatched_ids_report.tsv` | 1 row / unmatched ID | Every ID that did not join the canonical proteome |
 | `report.md` / `report.html` | — | Human-readable summary; the HTML is fully self-contained (inline CSS, hand-written SVG bars, no scripts, no external requests) |
 | `run_metadata.json` | — | Resolved config, input SHA-256s, CLI, versions, every count |
@@ -574,7 +598,9 @@ Each row is a decision that could reasonably have gone the other way.
 |----------|------------------------|--------------|---------------|
 | Accession matching only | Description regex (as in the legacy script) | Descriptions are unstable free text and match by accident | Accession lists must be curated and audited; hence `accession_audit.tsv` |
 | `CC` excluded from core immune features | Include it, as in Rody et al. (2019) | Coiled coils are ubiquitous; including them inflates the survey with structural proteins | A CC-only protein is `Non-RGA` unless it also has TM (→ `TM-CC`) |
-| DeepCoil2 as primary CC channel | InterProScan Coils (Lupas 1991) | Learned predictor, per-residue resolution, far better on plant NLR N-termini | DeepCoil2 is *stricter* here: 28,135 proteins are Coils-only. Quantified, not hidden — see README §4.4 |
+| **Domain model (`PF18052`) as leading CC channel**, predictors retained beside it | DeepCoil2 alone (earlier revision); Coils alone (legacy) | Eight of nine features come from curated domain models; taking the ninth from a propensity score with no published cut-off and no structural benchmark (Simm et al. 2021) was the pipeline's weakest link. 2,003 of the 3,038 `NL` calls made under the DeepCoil2-only default carried `PF18052` | `PF18052` covers Rx/Gpa2-type CNLs only, so `CNL` is still a floor; 1,006 NLRs remain CC-negative |
+| CC policy default `union` over three channels | `rx_domain` alone; `deepcoil` (the earlier default) | Keeps the predictors contributing the 33 NLRs no domain model supports | Promotes Coils to a full channel, which doubles `TM-CC` (3,960 → 8,105). 73 % of those land at `low` confidence, so the grading exposes it |
+| A third CC channel outside the nine-feature vocabulary | A tenth feature | A tenth feature would double the exclusivity proof to 2¹⁰ and add a `feat_` column that no rule reads | One reserved pseudo-feature name (`CC_domain`) that readers of the config must know about |
 | TM policy `union` by default | `intersection` | A screen should not lose receptors to predictor disagreement | Lower TM precision, mitigated by the CC/TM cross-talk demotion |
 | Rules as ordered data + exhaustive proof | `if/elif` chain | Overlap becomes detectable instead of invisible | 512-combination enumeration on every run (milliseconds) |
 | Per-protein output **plus** a locus summary | Collapse isoforms up front | Isoform-level calls are the evidence; locus-level is the interpretation. Collapsing early destroys information | One extra 194,593-row file |
@@ -584,7 +610,9 @@ Each row is a decision that could reasonably have gone the other way.
 | Iterate `records` (dicts), no wide frame | `DataFrame.itertuples()` | `itertuples` renames `feat_NB-ARC`, silently dropping NB-ARC from reasons and confidence | Slightly more explicit code |
 | Linear pass for the locus summary | `groupby().apply()` | `apply` over 194,593 groups exhausted memory and killed the process **with no traceback**, truncating three consecutive runs after `accession_audit.tsv` | Hand-written aggregation, covered by tests |
 | Streaming `.tar.xz` | Extract archives to disk | `data/` stays read-only; no 40 GB temp directory | Slower random access, irrelevant for a full sweep |
-| `rich` for console, plain text for `run.log` | `rich` everywhere | Progress bars and colour help a 20-minute interactive run; `run.log` must stay greppable and ANSI-free | Two handlers instead of one. `markup=False` is required: log lines contain `['PF00931', …]`, which rich would otherwise parse as style tags and delete |
+| Light-only report palette | Follow `prefers-color-scheme` | The report is a printable record: it gets screenshotted into slides, pasted into theses and printed. It has to look the same for every reader and on paper | A reader in a dark desktop theme gets a bright page. `color-scheme: light` at least stops the browser auto-darkening the controls around it |
+| The report reprints the command that made it | Leave it in `run_metadata.json` only | The person reading the HTML is the person who needs to re-run it, and `shlex.join` makes it pasteable rather than merely indicative | The command is recorded twice, in the report and the metadata — both from the same `ctx["command"]`, so they cannot disagree |
+| `rich` for console, plain text for `run.log` | `rich` everywhere | Progress bars and colour help a long interactive run; `run.log` must stay greppable and ANSI-free | Two handlers instead of one. `markup=False` is required: log lines contain `['PF00931', …]`, which rich would otherwise parse as style tags and delete |
 
 ---
 
@@ -599,7 +627,7 @@ Only InterProScan is required. Everything else degrades in a defined way:
 | **Both** TM tools | TM entirely | RLK/RLP rules can still fire via SP; `TM-CC` cannot fire at all | −2 on affected calls |
 | SignalP 6.0 | SP | SP falls back per `--sp-policy` | −2 |
 | DeepLoc 2.0 | localisation | Supporting evidence only; no class changes | `deeploc_inconsistent` cannot fire |
-| DeepCoil2 | CC (primary) | Falls back to InterProScan Coils; `CNL`/`CN`/`TM-CC` counts change materially | `cc_coils_only` (−2) |
+| DeepCoil2 | one CC channel of three | The domain model and Coils remain; `TM-CC` shrinks materially, `CNL` barely moves (2,648 → 2,328 in the reference data) | `cc_coils_only` (−2) where Coils alone carries a call |
 | InterProScan | — | **Fatal**, by design: with no domain evidence there is nothing to classify | run aborts |
 
 Hard failures, all with actionable messages: configuration missing a key or referencing an
@@ -619,10 +647,20 @@ Reference run on the R570 proteome (299,731 proteins), 6 workers:
 | Evidence build | one record per protein | dicts, not a wide DataFrame |
 | Locus summary | 194,593 groups | single linear pass, no `groupby().apply()` |
 
-Peak RSS ≈ **426 MB**, which matters: the machine this was developed on had ~2 GB free, and
-the first two designs (wide frame, `groupby().apply()`) were killed by the OOM reaper
-without a traceback. Memory is a correctness concern here, not a nicety — a killed process
-leaves a *partially written* output directory, which is exactly what P3/P5 exist to prevent.
+Measured on this machine (6 workers, DeepCoil2 cache warm): **72 s wall clock, peak RSS
+2.84 GB**; 87 s with a cold cache, when the 60 `.tar.xz` archives are re-read. Peak memory
+is the same at `--workers 1` (2.84 GB), so it is the parent process — the chunked
+InterProScan pass and the long evidence table — not the pool.
+
+> An earlier version of this document quoted **426 MB**. That figure was real but
+> misattributed: it was the peak of the *locus-summary step* after bug 8 was fixed, not of
+> the run. It is corrected here rather than quietly dropped, because the number was being
+> used to size a machine.
+
+Memory is a correctness concern here, not a nicety: the two designs that preceded this one
+(a wide per-protein frame, and `groupby().apply()` over 194,593 loci) were killed by the
+OOM reaper **without a traceback**, and a killed process leaves a *partially written*
+output directory — exactly what P3 and P5 exist to prevent.
 
 ---
 
@@ -644,7 +682,7 @@ never should.
 
 ---
 
-*Written against pipeline v1.0.0 / config v1.0.0. If you change a rule, a threshold or an
+*Written against pipeline v0.0.1 / config v0.0.1. If you change a rule, a threshold or an
 accession, the numbers quoted here stop applying — re-run and regenerate
 `report.md`, which is produced from the run itself and cannot go stale in the way this
 document can.*

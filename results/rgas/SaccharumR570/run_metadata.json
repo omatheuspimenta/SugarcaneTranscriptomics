@@ -3,28 +3,33 @@
     "both": 14165,
     "coils_only": 28135,
     "deepcoil_only": 4579,
-    "neither": 252852
+    "neither": 252852,
+    "rx_domain": 2827,
+    "rx_domain_only": 1056
   },
   "cc_policy_subclass_counts": [
     {
       "coils": 191,
       "deepcoil": 79,
-      "intersection": 40,
+      "intersection": 30,
       "rga_subclass": "CN",
-      "union": 230
+      "rx_domain": 283,
+      "union": 358
     },
     {
       "coils": 1638,
       "deepcoil": 396,
-      "intersection": 244,
+      "intersection": 185,
       "rga_subclass": "CNL",
-      "union": 1790
+      "rx_domain": 2328,
+      "union": 2648
     },
     {
       "coils": 2992,
       "deepcoil": 2992,
       "intersection": 2992,
       "rga_subclass": "LRR-RLK",
+      "rx_domain": 2992,
       "union": 2992
     },
     {
@@ -32,6 +37,7 @@
       "deepcoil": 1238,
       "intersection": 1238,
       "rga_subclass": "LRR-RLP",
+      "rx_domain": 1238,
       "union": 1238
     },
     {
@@ -39,6 +45,7 @@
       "deepcoil": 45,
       "intersection": 45,
       "rga_subclass": "LysM-RLK",
+      "rx_domain": 45,
       "union": 45
     },
     {
@@ -46,55 +53,63 @@
       "deepcoil": 80,
       "intersection": 80,
       "rga_subclass": "LysM-RLP",
+      "rx_domain": 80,
       "union": 80
     },
     {
       "coils": 358,
       "deepcoil": 470,
-      "intersection": 509,
+      "intersection": 519,
       "rga_subclass": "N",
-      "union": 319
+      "rx_domain": 266,
+      "union": 191
     },
     {
       "coils": 268327,
       "deepcoil": 270580,
-      "intersection": 272468,
+      "intersection": 274540,
       "rga_subclass": "NA",
-      "union": 266439
+      "rx_domain": 274529,
+      "union": 266435
     },
     {
       "coils": 1796,
       "deepcoil": 3038,
-      "intersection": 3190,
+      "intersection": 3249,
       "rga_subclass": "NL",
-      "union": 1644
+      "rx_domain": 1106,
+      "union": 786
     },
     {
-      "coils": 11266,
-      "deepcoil": 11266,
-      "intersection": 11266,
+      "coils": 16793,
+      "deepcoil": 16793,
+      "intersection": 16793,
       "rga_subclass": "Other",
-      "union": 11266
+      "rx_domain": 16793,
+      "union": 16793
     },
     {
       "coils": 7,
       "deepcoil": 7,
       "intersection": 7,
       "rga_subclass": "RNL",
+      "rx_domain": 7,
       "union": 7
     },
     {
       "coils": 6213,
       "deepcoil": 3960,
-      "intersection": 2072,
+      "intersection": 0,
       "rga_subclass": "TM-CC",
-      "union": 8101
+      "rx_domain": 11,
+      "union": 8105
     },
     {
       "coils": 33,
       "deepcoil": 33,
       "intersection": 33,
       "rga_subclass": "TN",
+      "rx_domain": 33,
       "union": 33
     },
     {
@@ -102,14 +117,8 @@
       "deepcoil": 20,
       "intersection": 20,
       "rga_subclass": "TX",
+      "rx_domain": 20,
       "union": 20
-    },
-    {
-      "coils": 5527,
-      "deepcoil": 5527,
-      "intersection": 5527,
-      "rga_subclass": "other-RLK",
-      "union": 5527
     }
   ],
   "cc_segment_sensitivity": [
@@ -155,60 +164,67 @@
     "cc_min_length": null,
     "cc_policy": null,
     "cc_threshold": null,
-    "config": "/home/matheus/Documents/ESALQ/SugarcaneTranscriptomics/code/config/rga_config.yaml",
+    "config": "/home/matheus/Documents/ESALQ/SugarcaneTranscriptomics/code/rgas/config/rga_config.yaml",
     "deepcoil": null,
     "deeploc": null,
     "deeptmhmm": null,
     "input_dir": "data/rgas",
     "interproscan": null,
+    "invoked_with": [
+      "--input-dir",
+      "data/rgas/",
+      "--outdir",
+      "results/rgas/SaccharumR570/",
+      "--organism-name",
+      "SaccharumR570"
+    ],
     "keep_non_rga": true,
     "log_level": "INFO",
     "min_lrr_copies": null,
-    "organism_name": "Saccharum officinarum x spontaneum R570",
+    "organism_name": "SaccharumR570",
     "outdir": "results/rgas/SaccharumR570",
     "phobius": null,
     "refresh_deepcoil_cache": false,
     "signalp": null,
     "sp_policy": null,
     "tm_policy": null,
-    "workers": 6
+    "workers": 4
   },
-  "command": "code/rgas_prediction.py --input-dir data/rgas --outdir results/rgas/SaccharumR570 --organism-name Saccharum officinarum x spontaneum R570 --workers 6 --log-level INFO",
-  "config_version": "1.0.0",
+  "command": "code/rgas_prediction.py --input-dir data/rgas/ --outdir results/rgas/SaccharumR570/ --organism-name SaccharumR570",
+  "config_version": "0.0.1",
   "counts": {
     "by_confidence": {
-      "high": 23585,
-      "low": 1859,
-      "medium": 3707
+      "high": 24059,
+      "low": 6236,
+      "medium": 3001
     },
     "by_family": {
       "NLR": 4023,
       "NLR-associated": 20,
-      "Non-RGA": 270580,
-      "Other": 11266,
-      "RLK": 8564,
+      "Non-RGA": 266435,
+      "Other": 16793,
+      "RLK": 3037,
       "RLP": 1318,
-      "TM-CC": 3960
+      "TM-CC": 8105
     },
     "by_subclass": {
-      "CN": 79,
-      "CNL": 396,
+      "CN": 358,
+      "CNL": 2648,
       "LRR-RLK": 2992,
       "LRR-RLP": 1238,
       "LysM-RLK": 45,
       "LysM-RLP": 80,
-      "N": 470,
-      "NA": 270580,
-      "NL": 3038,
-      "Other": 11266,
+      "N": 191,
+      "NA": 266435,
+      "NL": 786,
+      "Other": 16793,
       "RNL": 7,
-      "TM-CC": 3960,
+      "TM-CC": 8105,
       "TN": 33,
-      "TX": 20,
-      "other-RLK": 5527
+      "TX": 20
     },
     "n_proteins": 299731,
-    "n_rga": 29151
+    "n_rga": 33296
   },
   "environment": {
     "numpy": "2.5.2",
@@ -311,15 +327,19 @@
     },
     {
       "available": true,
-      "n_lines": 5060,
+      "n_lines": 60,
       "path": "data/rgas/DeepCoil",
-      "sha256": "cf627355ce4d0177060afe6f19bbfc1c057fe14dafd1fa06c5f4110ca1b33738",
-      "size_bytes": 184077592,
+      "sha256": "6733277c760b56236d50741c0e8ac58d101ce92488f38d88b1a9f1f68654b947",
+      "size_bytes": 123688840,
       "tool": "deepcoil"
     }
   ],
-  "organism": "Saccharum officinarum x spontaneum R570",
+  "organism": "SaccharumR570",
   "resolved_config": {
+    "cc_domain_accessions": [
+      "PF18052",
+      "IPR041118"
+    ],
     "coiled_coil": {
       "max_gap": 2,
       "min_length": 21,
@@ -353,20 +373,24 @@
       "default": "high",
       "demotions": [
         {
-          "description": "CC-dependent call supported by DeepCoil2 but not by InterProScan Coils",
+          "description": "CC-dependent call supported by DeepCoil2 alone: no CC domain model and no InterProScan Coils agreement",
           "id": "cc_deepcoil_only",
           "steps": 1,
           "when": {
-            "cc_source": "deepcoil_only",
+            "cc_coils": false,
+            "cc_deepcoil": true,
+            "cc_rx_domain": false,
             "classes_using_cc": true
           }
         },
         {
-          "description": "CC-dependent call supported only by InterProScan Coils (known to under-detect and to be noisy)",
+          "description": "CC-dependent call supported only by InterProScan Coils (the 1991 Lupas algorithm; benchmarked close to random against PDB structures)",
           "id": "cc_coils_only",
           "steps": 2,
           "when": {
-            "cc_source": "coils_only",
+            "cc_coils": true,
+            "cc_deepcoil": false,
+            "cc_rx_domain": false,
             "classes_using_cc": true
           }
         },
@@ -411,7 +435,7 @@
         "high"
       ]
     },
-    "config_version": "1.0.0",
+    "config_version": "0.0.1",
     "core_immune_features": [
       "NB-ARC",
       "TIR",
@@ -544,7 +568,8 @@
         "PF14580",
         "SM00365",
         "SM00369",
-        "SM00370",
+        "SM00364",
+        "SM00368",
         "IPR001611",
         "IPR003591",
         "IPR032675",
@@ -571,8 +596,7 @@
       ],
       "NB-ARC": [
         "PF00931",
-        "IPR002182",
-        "PF05729"
+        "IPR002182"
       ],
       "RPW8": [
         "PF05659",
@@ -609,10 +633,6 @@
       "merge_min_overlap": 1,
       "min_lrr_copies": 1
     },
-    "nacht_accessions": [
-      "PF05729",
-      "IPR007111"
-    ],
     "output": {
       "list_separator": ";",
       "missing_value": "NA",
@@ -620,7 +640,7 @@
       "write_locus_summary": true
     },
     "policies": {
-      "cc": "deepcoil",
+      "cc": "union",
       "sp": "signalp",
       "tm": "union"
     },
@@ -829,29 +849,6 @@
       },
       {
         "all_of": [
-          "STTK"
-        ],
-        "any_of": [
-          [
-            "TM",
-            "SP"
-          ]
-        ],
-        "description": "Kinase + (TM or SP), no recognised ectodomain, no NB-ARC",
-        "family": "RLK",
-        "id": "other-RLK",
-        "none_of": [
-          "NB-ARC",
-          "TIR",
-          "RPW8",
-          "LRR",
-          "LysM"
-        ],
-        "priority": 13,
-        "subclass": "other-RLK"
-      },
-      {
-        "all_of": [
           "LRR"
         ],
         "any_of": [
@@ -971,8 +968,8 @@
       "sp_overlap_fraction": 0.5
     },
     "watch_accessions": {
-      "IPR041118": "InterPro: Rx N-terminal domain -- see PF18052 above.",
-      "PF18052": "Pfam: Rx N-terminal domain -- the domain-level coiled-coil module of Rx/Gpa2-type plant CNLs. NOT used as CC evidence by default because the specified CC channels are DeepCoil2 (primary) and InterProScan Coils (secondary). See docs/rga/README.md section 4.4: 2611 of the 4023 R570 NLRs carry it, and enabling it as CC evidence moves CNL from 1790 to 2648 under --cc-policy union.",
+      "IPR007111": "InterPro: NACHT nucleoside triphosphatase -- see PF05729 above.",
+      "PF05729": "Pfam: NACHT domain. Reported, never used as NB-ARC evidence: NACHT is a distinct NTPase domain (InterPro keeps IPR007111 NACHT separate from IPR002182 NB-ARC). 0 hits in R570; relevant for fungal and animal proteomes, where NACHT NLRs are the norm.",
       "PTHR33463": "PANTHER: NB-ARC DOMAIN-CONTAINING PROTEIN-RELATED (family-level, not used as NB-ARC evidence)",
       "PTHR36766": "PANTHER: PLANT BROAD-SPECTRUM MILDEW RESISTANCE PROTEIN RPW8 (family-level, not used as RPW8 evidence). In R570 it hits 1273 of the 4023 NB-ARC proteins: using it as RPW8 evidence would inflate RNL from 7 to ~1273."
     }
@@ -993,12 +990,12 @@
     "min_lrr_copies": 1,
     "min_tm_helices": 1,
     "policies": {
-      "cc": "deepcoil",
+      "cc": "union",
       "sp": "signalp",
       "tm": "union"
     },
     "sp_overlap": 0.5
   },
-  "script_version": "1.0.0",
-  "timestamp_utc": "2026-08-25 01:23:21 UTC"
+  "script_version": "0.0.1",
+  "timestamp_utc": "2026-08-26 19:49:56 UTC"
 }

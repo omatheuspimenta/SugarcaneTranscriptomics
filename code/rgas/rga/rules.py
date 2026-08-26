@@ -215,6 +215,18 @@ def grade_confidence(
     return level, triggered
 
 
+#: ``when`` keys evaluated as a plain boolean comparison against the evidence
+#: record. Listing them explicitly (rather than treating any unknown key as a
+#: column name) means a typo in the configuration raises instead of silently
+#: matching everything.
+_BOOLEAN_WHEN_KEYS: tuple[str, ...] = (
+    "cc_rx_domain",
+    "cc_deepcoil",
+    "cc_coils",
+    "cc_tm_ambiguous",
+)
+
+
 def _demotion_applies(
     when: dict,
     row: Mapping[str, Any],
@@ -227,11 +239,9 @@ def _demotion_applies(
     """Evaluate the ``when`` clause of a single confidence demotion."""
     if "cc_source" in when and row.get("cc_source") != when["cc_source"]:
         return False
-    if (
-        "cc_tm_ambiguous" in when
-        and bool(row.get("cc_tm_ambiguous")) != when["cc_tm_ambiguous"]
-    ):
-        return False
+    for key in _BOOLEAN_WHEN_KEYS:
+        if key in when and bool(row.get(key)) != when[key]:
+            return False
     if "cc_is_n_terminal" in when:
         value = row.get("cc_is_n_terminal")
         if value is None or pd.isna(value) or bool(value) != when["cc_is_n_terminal"]:
@@ -409,6 +419,8 @@ def _cc_clause(row: Mapping[str, Any], available: dict[str, bool]) -> str:
         if best is not None and not pd.isna(best):
             source += f", max score {float(best):.3f}"
     coils = "Coils yes" if row.get("cc_coils") else "Coils no"
+    domain = "Rx domain yes" if row.get("cc_rx_domain") else "Rx domain no"
+    coils = f"{domain}; {coils}"
     state = "present" if row.get("cc_consensus") else "none"
     positional = row.get("cc_is_n_terminal")
     if positional is not None and not (
@@ -473,7 +485,12 @@ def collect_warnings(
     uses_cc = call.subclass in cfg.raw["confidence"]["classes_using_cc"]
     if uses_cc and row.get("cc_tm_ambiguous"):
         warnings.append("CC segment overlaps a predicted TM helix (possible artefact)")
-    if uses_cc and row.get("cc_source") == "coils_only":
+    if (
+        uses_cc
+        and row.get("cc_coils")
+        and not row.get("cc_rx_domain")
+        and not row.get("cc_deepcoil")
+    ):
         warnings.append("CC supported only by InterProScan Coils")
     if call.subclass == "CNL" and row.get("cc_is_n_terminal") is False:
         warnings.append("CC lies C-terminal to the NB-ARC domain")
@@ -508,6 +525,8 @@ PREDICTION_COLUMNS: tuple[str, ...] = (
     "rga_subclass",
     "domain_architecture",
     "features_found",
+    "feature_coords",
+    "feature_accessions",
     "n_lrr",
     "n_lrr_repeats",
     "defining_domain_databases",
@@ -516,6 +535,7 @@ PREDICTION_COLUMNS: tuple[str, ...] = (
     "n_tm_phobius_raw",
     "n_tm_deeptmhmm_raw",
     "n_tm_dropped_in_sp",
+    "n_tm_consensus",
     "tm_consensus",
     "sp_signalp",
     "sp_phobius",
@@ -525,6 +545,7 @@ PREDICTION_COLUMNS: tuple[str, ...] = (
     "cleavage_site",
     "cc_deepcoil",
     "cc_coils",
+    "cc_rx_domain",
     "cc_consensus",
     "cc_source",
     "n_cc_segments",
@@ -539,6 +560,7 @@ PREDICTION_COLUMNS: tuple[str, ...] = (
     "all_localizations",
     "has_integrated_domain",
     "integrated_domains",
+    "integrated_domain_descriptions",
     "rule_id",
     "rule_priority",
     "reason",
@@ -582,6 +604,7 @@ def classify_proteome(
     available = evidence.available
     tools = separator.join(sorted(name for name, ok in available.items() if ok))
     locus_pattern = options.get("locus_regex")
+    descriptions = getattr(evidence, "domain_descriptions", {}) or {}
 
     on_progress(0, total=len(evidence.records))
     records: list[dict[str, object]] = []
@@ -603,6 +626,7 @@ def classify_proteome(
                 tools,
                 separator,
                 locus_pattern,
+                descriptions,
             )
         )
         if index % PROTEIN_REPORT_INTERVAL == 0:
@@ -624,6 +648,7 @@ _INTEGER_COLUMNS: tuple[str, ...] = (
     "n_tm_phobius_raw",
     "n_tm_deeptmhmm_raw",
     "n_tm_dropped_in_sp",
+    "n_tm_consensus",
     "n_cc_segments",
     "cc_total_length",
     "rule_priority",
@@ -651,6 +676,28 @@ def _tidy_dtypes(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def _format_feature_map(
+    values: Mapping[str, Any], features: Sequence[str], render
+) -> str | None:
+    """Render a feature -> value mapping as ``FEATURE:value;FEATURE:value``.
+
+    Only features the protein actually carries are emitted, in the same order as
+    ``features_found``, so the column can be split on ``;`` and then on the first
+    ``:`` without ambiguity. Returns ``None`` (written as ``NA``) when empty.
+
+    Note for ``feature_accessions``: the values are **signature** accessions
+    (InterProScan column 5). A hit whose InterPro accession also maps to the
+    feature is still recorded once, under the signature that produced it -- the
+    same convention ``reason`` has always used.
+    """
+    parts = []
+    for feature in features:
+        rendered = render(values.get(feature))
+        if rendered and rendered != "NA":
+            parts.append(f"{feature}:{rendered}")
+    return ";".join(parts) if parts else None
+
+
 def _prediction_record(
     cfg: Config,
     call: Call,
@@ -662,6 +709,7 @@ def _prediction_record(
     tools: str,
     separator: str,
     locus_pattern: str | None,
+    descriptions: Mapping[str, str],
 ) -> dict[str, object]:
     """Assemble one output row from a call and its evidence."""
     integrated = row.get("noncanonical_domains") or []
@@ -677,6 +725,16 @@ def _prediction_record(
             row.get("feature_intervals") or {}, row.get("features") or []
         ),
         "features_found": separator.join(row.get("features") or []),
+        "feature_coords": _format_feature_map(
+            row.get("feature_intervals") or {},
+            row.get("features") or [],
+            _format_intervals,
+        ),
+        "feature_accessions": _format_feature_map(
+            row.get("feature_accessions") or {},
+            row.get("features") or [],
+            lambda values: ",".join(values) if values else "",
+        ),
         "defining_domain_databases": (row.get("feature_databases") or {}).get(
             _defining_feature(cfg, call)
         ),
@@ -687,6 +745,7 @@ def _prediction_record(
         "n_tm_phobius_raw": row.get("n_tm_phobius_raw"),
         "n_tm_deeptmhmm_raw": row.get("n_tm_deeptmhmm_raw"),
         "n_tm_dropped_in_sp": row.get("n_tm_dropped_in_sp"),
+        "n_tm_consensus": len(row.get("tm_intervals") or []),
         "tm_consensus": row.get("tm_consensus"),
         "sp_signalp": row.get("sp_signalp"),
         "sp_phobius": row.get("sp_phobius"),
@@ -696,6 +755,7 @@ def _prediction_record(
         "cleavage_site": row.get("cleavage_site"),
         "cc_deepcoil": row.get("cc_deepcoil"),
         "cc_coils": row.get("cc_coils"),
+        "cc_rx_domain": row.get("cc_rx_domain"),
         "cc_consensus": row.get("cc_consensus"),
         "cc_source": row.get("cc_source"),
         "n_cc_segments": row.get("n_cc_segments"),
@@ -710,6 +770,11 @@ def _prediction_record(
         "all_localizations": row.get("all_localizations"),
         "has_integrated_domain": bool(integrated) and is_nlr,
         "integrated_domains": separator.join(integrated)
+        if (integrated and is_nlr)
+        else None,
+        "integrated_domain_descriptions": separator.join(
+            descriptions.get(accession, accession) for accession in integrated
+        )
         if (integrated and is_nlr)
         else None,
         "rule_id": call.rule_id,
@@ -731,11 +796,17 @@ def _locus(protein_id: str, pattern: str | None) -> str | None:
 
 
 def cc_policy_sensitivity(cfg: Config, evidence) -> pd.DataFrame:
-    """Recount every subclass under each of the four ``--cc-policy`` settings.
+    """Recount every subclass under each ``--cc-policy`` setting.
 
     Only the CC channel is recomputed; all other evidence is held fixed. This
     answers the question "how sensitive are the CNL/CN/RNL/TM-CC counts to the
     coiled-coil consensus policy?" without re-running the whole pipeline.
+
+    Since config v1.1.0 there are three CC channels and therefore five policies.
+    ``union`` and ``intersection`` now range over all three, so their columns are
+    **not** comparable with the same-named columns of a v1.0.0 run -- which is
+    exactly why the policy is recorded in ``run_metadata.json`` alongside the
+    configuration version.
 
     Parameters
     ----------
@@ -749,19 +820,24 @@ def cc_policy_sensitivity(cfg: Config, evidence) -> pd.DataFrame:
     pandas.DataFrame
         Subclasses as rows, policies as columns, counts as values.
     """
-    from .evidence import apply_policy
+    from .evidence import apply_cc_policy
 
     core = frozenset(cfg.core_immune_features)
     base_features = [set(row["features"]) for row in evidence.records]
-    deepcoil = [row.get("cc_deepcoil") for row in evidence.records]
-    coils = [row.get("cc_coils") for row in evidence.records]
+    channels = [
+        {
+            "rx_domain": bool(row.get("cc_rx_domain")),
+            "deepcoil": row.get("cc_deepcoil"),
+            "coils": bool(row.get("cc_coils")),
+        }
+        for row in evidence.records
+    ]
 
     counts: dict[str, dict[str, int]] = {}
-    for policy in ("deepcoil", "union", "intersection", "coils"):
-        mapped = {"deepcoil": "first", "coils": "second"}.get(policy, policy)
+    for policy in ("rx_domain", "deepcoil", "coils", "union", "intersection"):
         tally: dict[str, int] = {}
-        for features, dc, co in zip(base_features, deepcoil, coils):
-            has_cc = apply_policy(mapped, dc, bool(co))
+        for features, row_channels in zip(base_features, channels):
+            has_cc = apply_cc_policy(policy, row_channels)
             adjusted = (features | {"CC"}) if has_cc else (features - {"CC"})
             call = classify_features(cfg.rules, frozenset(adjusted), core)
             tally[call.subclass] = tally.get(call.subclass, 0) + 1

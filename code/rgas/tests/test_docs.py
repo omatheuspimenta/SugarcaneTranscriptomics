@@ -18,8 +18,8 @@ import pytest
 from rga import report
 from rga.config import load_config
 
-REPO = Path(__file__).resolve().parents[2]
-CODE = REPO / "code"
+REPO = Path(__file__).resolve().parents[3]
+CODE = REPO / "code" / "rgas"
 DOCS = REPO / "docs" / "rga"
 CONFIG = CODE / "config" / "rga_config.yaml"
 
@@ -110,3 +110,53 @@ def test_architecture_document_exists_and_is_linked() -> None:
     assert (DOCS / "ARCHITECTURE.md").is_file()
     assert "ARCHITECTURE.md" in (DOCS / "README.md").read_text(encoding="utf-8")
     assert "docs/rga/ARCHITECTURE.md" in (REPO / "README.md").read_text(encoding="utf-8")
+
+
+def test_every_prediction_column_is_documented():
+    """The data dictionary must describe every column, and no column it lacks.
+
+    The dictionary is what a reader consults instead of the source, so a column
+    added without a row here is a column nobody can interpret -- and a row left
+    behind after a rename documents something that no longer exists.
+    """
+    import re
+
+    from rga.rules import PREDICTION_COLUMNS
+
+    readme = (DOCS / "README.md").read_text(encoding="utf-8")
+    start = readme.index("Data dictionary — `rga_predictions.tsv`")
+    end = readme.index("`rga_domain_evidence_long.tsv`", start)
+    documented = set(re.findall(r"^\| `([a-z_0-9]+)` \|", readme[start:end], re.M))
+    assert documented == set(PREDICTION_COLUMNS), (
+        f"undocumented: {sorted(set(PREDICTION_COLUMNS) - documented)}; "
+        f"documented but absent: {sorted(documented - set(PREDICTION_COLUMNS))}"
+    )
+
+
+def test_readme_example_command_matches_the_recorded_reference_run():
+    """The documented example and the reference run must be the same command.
+
+    Skipped when the reference run is not present in the checkout (the results
+    directory is large and may be absent); when it is present, the two must
+    agree token for token, so the README cannot document a command that is not
+    the one that produced the numbers beside it.
+    """
+    import json
+    import shlex
+
+    metadata = REPO / "results" / "rgas" / "SaccharumR570" / "run_metadata.json"
+    if not metadata.is_file():
+        pytest.skip("reference run not present in this checkout")
+    recorded = shlex.split(json.loads(metadata.read_text())["command"])
+
+    readme = (DOCS / "README.md").read_text(encoding="utf-8")
+    # the last fenced block of section 3.1 is the run command; the first is the
+    # one-time `uv sync`
+    section = readme.split("### 3.1 The shortest path", 1)[1].split("### 3.2", 1)[0]
+    block = section.split("```")[-2]
+    documented = shlex.split(block.replace("\\\n", " ").replace("bash\n", "", 1))
+    # drop the interpreter prefix the documented form carries
+    assert documented[:3] == ["uv", "run", "python"]
+    assert documented[3:] == recorded, (
+        f"README example: {documented[3:]}\nreference run: {recorded}"
+    )

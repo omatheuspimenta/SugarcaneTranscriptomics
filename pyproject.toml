@@ -1,6 +1,6 @@
 [project]
 name = "sugarcane-rga"
-version = "1.0.0"
+version = "0.0.1"
 description = "Genome-wide prediction and classification of Resistance Gene Analogs (RGAs) from protein annotation outputs"
 requires-python = ">=3.14"
 dependencies = [
@@ -18,5 +18,5 @@ dev = ["pytest>=8.0"]
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["code/tests"]
-pythonpath = ["code"]
+testpaths = ["code/rgas/tests"]
+pythonpath = ["code/rgas"]

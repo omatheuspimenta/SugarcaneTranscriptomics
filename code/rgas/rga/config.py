@@ -23,11 +23,20 @@ KNOWN_ID_OPS = frozenset(
     {"strip_after_whitespace", "strip_dots", "strip_after_pipe", "rstrip_suffixes"}
 )
 
+#: Reserved pseudo-feature carrying the domain-level coiled-coil channel.
+#: It is deliberately *not* a member of the nine-feature controlled vocabulary:
+#: it never reaches a rule, it only feeds the ``cc_rx_domain`` evidence channel.
+#: Keeping it out of ``features`` is what stops it from enlarging the 2**9
+#: exclusivity proof or creating a ``feat_`` column of its own.
+CC_DOMAIN_FEATURE = "CC_domain"
+
 #: Consensus policies accepted per channel.
 VALID_POLICIES: dict[str, frozenset[str]] = {
     "tm": frozenset({"union", "intersection", "deeptmhmm", "phobius"}),
     "sp": frozenset({"union", "intersection", "signalp", "phobius"}),
-    "cc": frozenset({"deepcoil", "union", "intersection", "coils"}),
+    "cc": frozenset(
+        {"rx_domain", "deepcoil", "coils", "union", "intersection"}
+    ),
 }
 
 
@@ -136,6 +145,10 @@ class Config:
         """Separator used inside multi-valued output cells."""
         return str(self.raw["output"]["list_separator"])
 
+    def cc_domain_accessions(self) -> tuple[str, ...]:
+        """Accessions of the domain-level coiled-coil channel."""
+        return tuple(str(a) for a in self.raw.get("cc_domain_accessions", []))
+
     def accession_to_features(self) -> dict[str, tuple[str, ...]]:
         """Invert the feature -> accessions mapping.
 
@@ -149,6 +162,8 @@ class Config:
         for feature, accessions in self.raw["interproscan_features"].items():
             for accession in accessions:
                 inverted.setdefault(str(accession), []).append(feature)
+        for accession in self.raw.get("cc_domain_accessions", []):
+            inverted.setdefault(str(accession), []).append(CC_DOMAIN_FEATURE)
         return {acc: tuple(sorted(feats)) for acc, feats in sorted(inverted.items())}
 
 
@@ -167,6 +182,7 @@ _REQUIRED_TOP_LEVEL = (
     "integrated_domain_analyses",
     "integrated_domain_canonical_features",
     "integrated_domain_exclusions",
+    "cc_domain_accessions",
     "intervals",
     "coiled_coil",
     "policies",
@@ -214,6 +230,7 @@ def load_config(path: str | Path) -> Config:
     _validate_ids(raw["ids"])
     _validate_policies(raw["policies"])
     _validate_features(raw)
+    _validate_cc_domain_accessions(raw)
 
     rules = _build_rules(raw)
     return Config(raw=copy.deepcopy(raw), rules=rules)
@@ -240,6 +257,33 @@ def _validate_policies(policies: dict[str, str]) -> None:
                 f"invalid {channel} policy {policies[channel]!r}; "
                 f"expected one of {sorted(allowed)}"
             )
+
+
+def _validate_cc_domain_accessions(raw: dict[str, Any]) -> None:
+    """Check the domain-level CC channel is a flat list of accession strings.
+
+    The list may be empty -- that simply disables the channel and restores the
+    two-predictor behaviour of config v1.0.0 -- but it may not overlap the
+    accessions already assigned to a feature, because an accession that fed two
+    CC channels at once would make ``--cc-policy intersection`` meaningless.
+    """
+    accessions = raw["cc_domain_accessions"]
+    if not isinstance(accessions, list):
+        raise ConfigError(
+            "cc_domain_accessions must be a list, got "
+            f"{type(accessions).__name__}"
+        )
+    assigned = {
+        str(accession)
+        for accessions_of_feature in raw["interproscan_features"].values()
+        for accession in accessions_of_feature
+    }
+    clash = sorted({str(a) for a in accessions} & assigned)
+    if clash:
+        raise ConfigError(
+            "cc_domain_accessions may not repeat an accession already used as "
+            f"feature evidence: {clash}"
+        )
 
 
 def _validate_features(raw: dict[str, Any]) -> None:
