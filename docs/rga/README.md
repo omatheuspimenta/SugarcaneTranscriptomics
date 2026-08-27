@@ -27,7 +27,7 @@ Both groups have highly characteristic domain architectures, so they can be reco
 from protein sequence alone.
 
 A **Resistance Gene Analog** is a protein that carries the domain architecture of a
-resistance protein. It is a *candidate*, identified from sequence features — not an
+resistance protein. It is a *candidate*, identified from sequence features, not an
 experimentally validated resistance gene.
 
 ### What this pipeline does
@@ -44,28 +44,57 @@ experimentally validated resistance gene.
 ### Relationship to Rody et al. (2019)
 
 This pipeline is a reimplementation of the RGA survey of Rody et al. (2019) [1] for the
-R570 proteome, and it **extends** that method in four ways. Each is a deliberate
-departure from the published rules, not a correction of them:
+R570 proteome. **Rody et al. is the reference method**: it supplies every default, and
+where another framework disagrees with it, the shipped configuration follows Rody. On top
+of that baseline the pipeline **extends** the method in three ways, each an addition to
+the published rules, not a replacement of one.
 
 | extension | what Rody et al. do | what this pipeline does |
 |---|---|---|
-| **SP anchoring** | RLK/RLP require `TM`; a signal peptide is never referenced | `SP` is accepted alongside `TM` as a membrane anchor (`any_of: [[TM, SP]]`) |
+| **SP anchoring** | RLK/RLP require `TM`; a signal peptide is never used as a classification criterion | `SP` is accepted alongside `TM` as a membrane anchor (`any_of: [[TM, SP]]`) |
 | **RPW8/RNL** | not modelled | `RPW8` is a first-class feature, giving the `RNL`, `RN` and `RX` classes |
-| **RX-CC evidence** | coiled coils from Coils v2 only | the Rx N-terminal CC domain (`PF18052`/`IPR041118`) is a CC channel alongside DeepCoil2 and InterProScan Coils (§5.4) |
-| **RGAugury-conformant RLK subclassing** | RLK is `TM + LRR or NB-LRR + kinase` — an ectodomain is required | RLKs are called on kinase + anchor and the ectodomain sub-types them (`LRR-RLK` / `LysM-RLK` / `other-RLK`), following RGAugury [2] |
+| **RX-CC evidence** | coiled coils from Coils v2 / InterProScan Coils only | the Rx N-terminal CC domain (`PF18052`/`IPR041118`) is a CC channel alongside DeepCoil2 and InterProScan Coils (§5.4) |
+
+None of the three removes a class or a rule Rody et al. define, and each is switchable
+from the configuration alone (§8), but two of them do reassign proteins, and it is worth
+being precise about which:
+
+- **SP anchoring is the one that relaxes a published requirement.** Rody et al. require
+  `TM`; this accepts `TM or SP`. It is one-directional, it can only let *more* proteins
+  satisfy the anchor condition, never fewer, so it adds to `LRR-RLK`/`LRR-RLP` and takes
+  from `Other`. Revert it by moving `TM` from `any_of` into `all_of` on the four RLK/RLP
+  rules.
+- **RPW8 reassigns within the NLR family.** `RNL`/`RN`/`RX` do not exist in Rody et al.,
+  so a protein this pipeline calls `RNL` would be `CNL` or `NL` there 7 proteins in R570.
+- **The Rx-CC channel only strengthens CC evidence.** It moves proteins `NL` → `CNL` and
+  `N` → `CN`; it never removes a CC that Coils would have called, because the three
+  channels combine under `union` (§5.4).
+
+Where a Rody rule and an RGAugury rule genuinely conflict, the conflict is resolved for
+Rody and the alternative is shipped disabled:
+
+- **The RLK ectodomain requirement.** Rody et al. define an RLK as `TM + LRR or NB-LRR +
+  kinase`, an ectodomain is *required*, so a kinase with a membrane anchor and no
+  LRR/LysM is not an RLK. RGAugury instead calls RLKs on kinase + anchor and uses the
+  ectodomain only to sub-type them, which yields a third subclass (`other-RLK`). This
+  pipeline follows **Rody**: `LRR-RLK` and `LysM-RLK` are the only RLK subclasses, and a
+  kinase + anchor protein with no recognised ectodomain falls through to `Other`. The
+  RGAugury variant is kept as a commented-out `other-RLK` rule in
+  [`rga_config.yaml`](../../code/rgas/config/rga_config.yaml); uncommenting it moves 5,527
+  R570 proteins (3,422 loci) out of `Other` and into a new `other-RLK` subclass.
 
 Two consequences worth stating whenever these numbers are quoted:
 
 - **The `Non-RGA` class is not comparable between the two.** Rody et al. keep "only
-  sequences harboring at least one out of three RGA basic domains — LRR, NB-ARC, or
+  sequences harboring at least one out of three RGA basic domains, LRR, NB-ARC, or
   NB-LRR"; this pipeline classifies the entire input proteome. Percent-of-proteome
   figures therefore cannot be compared, only RGA class counts on a shared gene set.
 - **Core detection agrees closely.** On the 77,883 genes both cover, per-feature Jaccard
   is 0.98 (LRR), 0.95 (NB-ARC, LysM) and 0.85 (kinase/STTK); `LRR-RLK` is 1,757 loci here
-  against 1,721 in the legacy table. The headline divergences come from the four
+  against 1,721 in the legacy table. The headline divergences come from the three
   extensions above, not from the domain calls.
 
-Each deviation is also commented at the rule it affects in
+Each extension is also commented at the rule it affects in
 [`rga_config.yaml`](../../code/rgas/config/rga_config.yaml).
 
 ### What this pipeline does *not* do
@@ -89,7 +118,6 @@ dependencies. From the repository root:
 
 ```bash
 uv sync --extra dev      # creates .venv and installs everything
-uv run pytest            # 185 tests, ~2 s
 ```
 
 `pyproject.toml` pins:
@@ -121,7 +149,7 @@ Once, to create the environment:
 uv sync --extra dev
 ```
 
-Then, from the repository root — this is the exact command that produced the reference
+Then, from the repository root, this is the exact command that produced the reference
 run shipped in `results/rgas/SaccharumR570/`, and the same command the report reprints
 under "Reproduce this run":
 
@@ -132,10 +160,7 @@ uv run python code/rgas/rgas_prediction.py \
     --organism-name SaccharumR570
 ```
 
-That reproduces the reference run. Measured on the development machine: **72 s and
-2.84 GB peak RSS** with the DeepCoil2 cache warm, 87 s cold. Memory, not time, is the
-constraint worth checking before you start.
-Open `results/rgas/SaccharumR570/report.html` in a browser when it finishes — it is a
+That reproduces the reference run. Open `results/rgas/SaccharumR570/report.html` in a browser when it finishes, it is a
 single self-contained file, so it can be emailed or copied anywhere.
 
 Nothing is written outside `--outdir`, and nothing at all is written inside the input
@@ -147,13 +172,13 @@ directory.
 |---|---|---|
 | `--input-dir DIR` | `data/rgas` | where to look for the six tool outputs (§4) |
 | `--outdir DIR` | `results/rgas/<organism>` | everything is written here |
-| `--organism-name NAME` | — | label used in the report and the output directory |
+| `--organism-name NAME` |, | label used in the report and the output directory |
 | `--config FILE` | `code/rgas/config/rga_config.yaml` | accessions, thresholds and rules |
 | `--interproscan`, `--phobius`, `--deeptmhmm`, `--signalp`, `--deeploc`, `--deepcoil` | auto-discovered | explicit path to one tool's output, overriding the glob |
 | `--cc-policy` | `union` | `rx_domain` · `deepcoil` · `coils` · `union` · `intersection` (§5.4) |
 | `--tm-policy` | `union` | `union` · `intersection` · `deeptmhmm` · `phobius` |
 | `--sp-policy` | `signalp` | `union` · `intersection` · `signalp` · `phobius` |
-| `--cc-threshold`, `--cc-min-length`, `--cc-max-gap` | `0.5`, `21`, `2` | DeepCoil2 segment calling — read §9 before changing |
+| `--cc-threshold`, `--cc-min-length`, `--cc-max-gap` | `0.5`, `21`, `2` | DeepCoil2 segment calling, read §9 before changing |
 | `--min-lrr-copies` | `1` | merged LRR intervals required before `LRR` is called |
 | `--rga-only` / `--keep-non-rga` | keep all | whether `rga_predictions.tsv` holds the whole proteome |
 | `--workers N` | `1` | processes used to read DeepCoil2 |
@@ -168,16 +193,15 @@ gracefully without any of the other five (§9), and the graceful-degradation mat
 
 Work outwards from the report:
 
-1. **`report.html`** — the summary. Read the callout at the top before quoting a count.
-   Section 3 reprints the command that produced it, ready to paste back; section 6 is the
-   one most people skip and shouldn't, because it shows how much of each class the grading
+1. **`report.html`**, the summary. Read the callout at the top before quoting a count.
+   Section 3 reprints the command that produced it, ready to paste back; section 6 shows how much of each class the grading
    already flags as weak. The page is a single self-contained file with a fixed light
    palette, so it prints and screenshots the same for everyone.
-2. **`rga_predictions.tsv`** — one row per protein, 51 columns (§7.1). This is the table
+2. **`rga_predictions.tsv`**, one row per protein, 51 columns (§7.1). This is the table
    to filter.
-3. **`rga_predictions_by_locus.tsv`** — the same result with isoforms collapsed. In a
+3. **`rga_predictions_by_locus.tsv`**, the same result with isoforms collapsed. In a
    polyploid genome this is usually the honest denominator.
-4. **`rga_domain_evidence_long.tsv`** — one row per supporting hit, for when you need to
+4. **`rga_domain_evidence_long.tsv`**, one row per supporting hit, for when you need to
    see exactly which signature at which coordinates produced a call.
 
 ### 3.4 Recipes
@@ -220,8 +244,8 @@ nlr.coords.iloc[0]["NB-ARC"]        # e.g. '191-361'
 counts as integers; only columns that can be missing (`sequence_length`, `cleavage_site`,
 …) stay strings, holding the literal `NA`.
 
-Column *positions* are not part of the contract — a new column can appear between
-releases — so look them up by name:
+Column *positions* are not part of the contract, a new column can appear between
+releases, so look them up by name:
 
 ```bash
 cd results/rgas/SaccharumR570
@@ -275,7 +299,7 @@ Files are located under `--input-dir` using the glob patterns in the
 `input_discovery` section of the configuration, and any of them can be overridden with an
 explicit `--<tool>` path.
 
-### 4.1 InterProScan 5 — **required**
+### 4.1 InterProScan 5, **required**
 
 ```bash
 # Suggested canonical command; the exact command used for R570 was not recorded.
@@ -298,7 +322,7 @@ SoffiXsponR570.7_10Ag383000.3.p	c1e88cf6…	526	Gene3D	G3DSA:3.40.50.300	-	1	118
 > therefore **`TODO`: not recoverable from the data**. Record it manually if you need to
 > cite it.
 
-### 4.2 Phobius — optional
+### 4.2 Phobius, optional
 
 ```bash
 phobius.pl -short proteome.fasta > r570.phobius
@@ -314,10 +338,10 @@ SoffiXsponR570.7os1g052000.1.p  1  0 o50-70i
 SoffiXsponR570.7os1g055400.1.p  1  Y n4-15c20/21o396-419i
 ```
 
-### 4.3 DeepTMHMM — optional
+### 4.3 DeepTMHMM, optional
 
 ```bash
-biolib run DTU/DeepTMHMM --fasta proteome.fasta     # writes TMRs.gff3
+python3 predict.py --fasta R570_proteome.fasta --output-dir R570/     # writes TMRs.gff3
 ```
 
 Format: GFF3-like blocks separated by `//`, 4 significant columns, 1-based inclusive.
@@ -330,11 +354,10 @@ Region types observed in R570: `TMhelix`, `signal`, `inside`, `outside`, `Beta s
 SoffiXsponR570.7os1g055400.1.p	TMhelix	396	416
 ```
 
-### 4.4 SignalP 6.0 — optional
+### 4.4 SignalP 6.0, optional
 
 ```bash
-signalp6 --fastafile proteome.fasta --organism eukarya --format txt \
-         --output_dir signalp6/ --mode fast
+signalp6 --fastafile R570_proteome.fasta --organism other --output_dir R570/ --format txt --mode slow
 ```
 
 Format: two `#` comment lines, then 9 tab-separated columns. **Column 1 is the entire
@@ -347,10 +370,10 @@ SoffiXsponR570.7os1g018900.1.p pacid=55934876 transcript=… org=…	SP	0.000177
 SoffiXsponR570.7os1g046800.1.p pacid=55934877 transcript=… org=…	OTHER	1.000000	0.000000	0.000000	0.000000	0.000000	0.000000	
 ```
 
-### 4.5 DeepLoc 2.0 — optional
+### 4.5 DeepLoc 2.0, optional
 
 ```bash
-deeploc2 --fasta proteome.fasta --output deeploc2/ --model Accurate
+deeploc2 --fasta R570_proteome.fasta --output R570/ --model Accurate
 ```
 
 Format: CSV with a header. `Localizations` is **multi-label and pipe-separated**; the
@@ -362,7 +385,7 @@ SoffiXsponR570.7os1g018900.1.p,Extracellular,Signal peptide,Soluble,0.1109,0.109
 SoffiXsponR570.7os1g046800.1.p,Nucleus,Nuclear localization signal,Soluble,0.1249,0.8997,0.0329,0.0809,…
 ```
 
-### 4.6 DeepCoil2 — optional but strongly recommended
+### 4.6 DeepCoil2, optional but strongly recommended
 
 ```bash
 deepcoil -i proteome.fasta -out_path deepcoil/ --n_cpu 8    # one .out file per protein
@@ -386,7 +409,7 @@ pass `--refresh-deepcoil-cache` to re-read.
 > **`cc` is not a per-residue probability.** DeepCoil2 has already performed peak
 > detection: inside a candidate segment every residue carries the same plateau value and
 > outside it the value is exactly `0`. `raw_cc` is the per-residue signal. Segment calling
-> must therefore split on a *change of value*, not only on zeros — see §5.4.
+> must therefore split on a *change of value*, not only on zeros, see §5.4.
 
 ### 4.7 Protein identifiers
 
@@ -415,11 +438,11 @@ written to `unmatched_ids_report.tsv` with a reason.
 
 ## 5. Methodology
 
-### 5.1 Domain evidence — accession matching, never description matching
+### 5.1 Domain evidence, accession matching, never description matching
 
 Feature assignment uses **accessions only**: the signature accession (InterProScan column
 5) and the integrated InterPro accession (column 12). Description-string matching is
-rejected because it is version-dependent and produces false positives — a regular
+rejected because it is version-dependent and produces false positives, a regular
 expression for `coil` matches `Coiled coil-helix-coiled coil-helix (CHCH) domain profile`
 and `LRR_CC_2` (a *cysteine*-containing LRR), neither of which is a coiled coil.
 
@@ -437,11 +460,11 @@ All coordinates are 1-based inclusive, in every tool, which is verified in §4.
 
 Two LRR counts are reported:
 
-- **`n_lrr`** — merged intervals from *every* LRR source. This is the count that
+- **`n_lrr`**, merged intervals from *every* LRR source. This is the count that
   `--min-lrr-copies` gates. Region-level signatures (`G3DSA:3.80.10.10`, SUPERFAMILY)
   span the entire LRR region, so a protein with a dozen repeats normally collapses to a
   single interval. Raising `--min-lrr-copies` above 1 is therefore a blunt filter.
-- **`n_lrr_repeats`** — merged intervals from repeat-level signatures only
+- **`n_lrr_repeats`**, merged intervals from repeat-level signatures only
   (`intervals.lrr_repeat_analyses`, default Pfam/SMART/PRINTS/ProSitePatterns). This is
   the biologically meaningful copy number.
 
@@ -451,7 +474,7 @@ Helices are read from **both** Phobius and DeepTMHMM. The consensus policy is
 `--tm-policy {union, intersection, deeptmhmm, phobius}`, default **`union`**, matching
 common practice; the policy actually used is logged and written to `run_metadata.json`.
 
-**Signal peptides are routinely mis-called as transmembrane helices** — both are
+**Signal peptides are routinely mis-called as transmembrane helices**, both are
 hydrophobic α-helices. Any predicted helix covered by the signal-peptide region
 (residues 1…`sp_end`) by at least `transmembrane.sp_overlap_fraction` of its own length
 (default 0.5) is discarded. `sp_end` is the most conservative estimate available: the
@@ -462,7 +485,7 @@ Both the raw and the filtered helix counts are reported (`n_tm_phobius_raw` vers
 `n_tm_phobius`), together with `n_tm_dropped_in_sp`, so the effect of the filter is always
 visible.
 
-### 5.4 Coiled coils — three channels, and why the domain model leads
+### 5.4 Coiled coils, three channels, and why the domain model leads
 
 The coiled coil is the weakest link in any RGA survey: it decides `CNL` against `NL`,
 and it is the one feature this pipeline used to take from a source of a different
@@ -471,7 +494,7 @@ CC channels:
 
 | Channel | Kind of evidence | Accession / parameters |
 |---|---|---|
-| `rx_domain` | **profile HMM for a named domain** — curated, versioned, stable accession | `PF18052` / `IPR041118`, Rx N-terminal domain |
+| `rx_domain` | **profile HMM for a named domain**, curated, versioned, stable accession | `PF18052` / `IPR041118`, Rx N-terminal domain |
 | `deepcoil` | learned per-residue propensity score | DeepCoil2, thresholded at `cc_threshold` over `cc_min_length` |
 | `coils` | profile-based propensity (Lupas 1991) | InterProScan `Coils` / accession `Coil` |
 
@@ -482,8 +505,8 @@ was an inconsistency at the heart of the rule set, and the R570 data shows what 
 
 Neither predictor publishes a recommended cut-off. The DeepCoil documentation describes
 its `cc` column only as *"sharpened coiled coil propensity"*; Ludwiczak et al. (2019)
-report AUC/ROC and F1 — metrics that sweep every threshold precisely so that none has to
-be chosen — and name a cut-off exactly once, *"a very strict cut-off of 0.9"*, used to mine
+report AUC/ROC and F1, metrics that sweep every threshold precisely so that none has to
+be chosen, and name a cut-off exactly once, *"a very strict cut-off of 0.9"*, used to mine
 the human genome for high-confidence **novel** coiled coils. That is a discovery cut-off,
 not an annotation one, and §9 shows what it does to this proteome.
 
@@ -492,8 +515,8 @@ PDB via SOCKET and found a **30-fold spread** in how many coiled coils they call
 (PairCoil 1,307 PDB files, NCOILS 37,177) and agreement with structure close to random:
 *"the MCC indicates random prediction in case of NCOILS (MCC of 0.02) and close to random
 prediction for all other tools (MCC of 0.22 for MultiCoil2 being the highest value)"*.
-DeepCoil was **excluded** from that benchmark — it was limited to 500 residues at the time
-and mis-predicted a coiled coil at the first IQ motif of myosin-X — so it has no
+DeepCoil was **excluded** from that benchmark, it was limited to 500 residues at the time
+and mis-predicted a coiled coil at the first IQ motif of myosin-X, so it has no
 independent structural benchmark either way.
 
 Against that, `PF18052` is an ordinary curated Pfam entry with an integrated InterPro
@@ -518,7 +541,7 @@ roughly 14 % recall, and contributes 33 NLRs that nothing else supports.
 
 And the cost of leaving the domain out, under the old default:
 
-> **2,003 of the 3,038 proteins called `NL` (66 %) carry `PF18052`** — two thirds of the
+> **2,003 of the 3,038 proteins called `NL` (66 %) carry `PF18052`**, two thirds of the
 > largest NLR class were proteins holding the coiled-coil domain of an Rx-type CNL, reported
 > as NLRs with no coiled coil.
 
@@ -527,7 +550,7 @@ default.
 
 **The bound on the claim, stated plainly.** `PF18052` models the CC of **Rx/Gpa2-type**
 CNLs. It is not "the" NLR coiled-coil domain. The 1,006 R570 NLRs positive for none of the
-three channels remain CC-negative, so `CNL` is still a floor — a much higher and much
+three channels remain CC-negative, so `CNL` is still a floor, a much higher and much
 better-supported floor than before, but a floor.
 
 **Segment calling (the DeepCoil2 channel).** All parameters live under `coiled_coil`:
@@ -543,7 +566,7 @@ interrupted by one or two sub-threshold residues is not lost.
 heptads are generally unstable, and Simm et al. (2021) evaluated every predictor under
 exactly two length cut-offs, **14 and 21 residues**, reporting that *"the prediction tools
 show increasing performance when applying the 14 and then the 21 amino acid cut-offs
-compared to no length cut-off"* — with the caveat that *"the increase in sensitivity comes
+compared to no length cut-off"*, with the caveat that *"the increase in sensitivity comes
 to the cost of precision, which decreases by 5–17%"*. `threshold: 0.5` has no such support
 and is documented in the configuration as a deliberate midpoint choice, not a default.
 
@@ -562,7 +585,7 @@ Recorded per protein: `n_cc_segments`, `cc_max_prob`, `cc_mean_prob_in_segments`
 **Consensus policy.** `--cc-policy {union, intersection, rx_domain, deepcoil, coils}`,
 default **`union`**. `cc_rx_domain`, `cc_deepcoil`, `cc_coils`, `cc_consensus` and
 `cc_source` are all stored, so the consensus never hides which channel fired.
-`cc_source` names every contributing channel — `rx_domain+deepcoil+coils`,
+`cc_source` names every contributing channel, `rx_domain+deepcoil+coils`,
 `rx_domain_only`, `deepcoil_only`, `coils_only`, and so on.
 
 > **`union` and `intersection` range over three channels, not two.** A
@@ -592,16 +615,16 @@ Coils, a prominent warning is logged, and predictor-only calls are graded down a
 The domain channel needs only InterProScan, so unlike in a DeepCoil2-only setup a missing DeepCoil2 no
 longer makes every CC-dependent NLR call low-confidence.
 
-**The family-level RPW8 signature was correctly rejected — and the contrast with `PF18052`
+**The family-level RPW8 signature was correctly rejected, and the contrast with `PF18052`
 is the point.** PANTHER `PTHR36766` ("PLANT BROAD-SPECTRUM MILDEW RESISTANCE PROTEIN
 RPW8") hits 1,378 proteins, **1,273 of which carry NB-ARC**. That ratio is the diagnosis: a
 genuine RPW8 domain model would have no reason to land on NLRs 92 % of the time. It is a
-**family-level** signature — "this whole protein resembles a cluster the curators named
-after RPW8" — not a statement that any particular region is an RPW8 domain. Had it been
+**family-level** signature, "this whole protein resembles a cluster the curators named
+after RPW8", not a statement that any particular region is an RPW8 domain. Had it been
 used as evidence, `RNL` would have gone from 7 to roughly 1,273 and, because `RNL` outranks
 `CNL` and `NL`, it would have swallowed most of the NLR complement. It stays in
 `watch_accessions`, counted in `accession_audit.tsv`, never used. `PF18052` is the opposite
-case — a domain-level model, positional and specific — which is why it was promoted while
+case, a domain-level model, positional and specific, which is why it was promoted while
 `PTHR36766` was not.
 
 
@@ -614,7 +637,7 @@ SignalP 6.0 classes counted as a signal peptide: `SP`, `LIPO`, `TAT`, `TATLIPO`,
 accurate dedicated predictor. `sp_signalp`, `sp_prob`, `sp_phobius`, `sp_consensus` and
 `cleavage_site` are all stored.
 
-### 5.6 DeepLoc 2.0 — supporting evidence only
+### 5.6 DeepLoc 2.0, supporting evidence only
 
 Localisation **never** decides a class. It is used to:
 
@@ -658,7 +681,7 @@ So, for a CC-dependent call:
 
 ### 5.8 The `reason` field
 
-Every row carries a sentence generated **from the evidence table** — there is no per-class
+Every row carries a sentence generated **from the evidence table**, there is no per-class
 template, so the text always reflects what the pipeline actually saw:
 
 ```text
@@ -673,7 +696,7 @@ CC is N-terminal to NB-ARC. DeepLoc: Nucleus (0.59) -- consistent. Confidence: h
 
 For NLRs only, any domain from `integrated_domain_analyses` (Pfam by default) that does
 not belong to `integrated_domain_canonical_features` and is not in
-`integrated_domain_exclusions` is reported as an **integrated domain** — the fusion of a
+`integrated_domain_exclusions` is reported as an **integrated domain**, the fusion of a
 non-canonical domain to an NLR, central to the integrated-decoy model of effector
 recognition.
 
@@ -692,8 +715,8 @@ the family-specific LRR models (`PF25019`, 1,032). With them excluded, R570 give
 | BED zinc finger | `PF02892` | 15 |
 
 **285 of the 4,023 NLRs (7.1 %)** carry at least one integrated domain. The composition is
-what the literature leads one to expect for a grass — kinase, WRKY and BED fusions
-dominate — which is a useful independent check that the exclusion list is drawn in the
+what the literature leads one to expect for a grass, kinase, WRKY and BED fusions
+dominate, which is a useful independent check that the exclusion list is drawn in the
 right place.
 
 ### 5.10 Complete accession → feature mapping
@@ -771,11 +794,11 @@ Accessions recorded but deliberately **not** used as evidence (`watch_accessions
 
 | Accession | Hits in R570 | Why it is excluded |
 |---|---|---|
-| `PTHR36766` | 1,378 | PANTHER: PLANT BROAD-SPECTRUM MILDEW RESISTANCE PROTEIN RPW8. **Family-level**, not domain-level: 1,273 of its 1,378 hits carry NB-ARC, which is the diagnosis — a real RPW8 domain model would have no reason to land on NLRs 92 % of the time. Using it would take `RNL` from 7 to ~1,273 and, since `RNL` outranks `CNL` and `NL`, swallow most of the NLR complement |
+| `PTHR36766` | 1,378 | PANTHER: PLANT BROAD-SPECTRUM MILDEW RESISTANCE PROTEIN RPW8. **Family-level**, not domain-level: 1,273 of its 1,378 hits carry NB-ARC, which is the diagnosis, a real RPW8 domain model would have no reason to land on NLRs 92 % of the time. Using it would take `RNL` from 7 to ~1,273 and, since `RNL` outranks `CNL` and `NL`, swallow most of the NLR complement |
 | `PTHR33463` | 412 | PANTHER: NB-ARC DOMAIN-CONTAINING PROTEIN-RELATED (family-level, not used as NB-ARC evidence) |
 
 Contrast this with `PF18052`, which *is* used as evidence here: it is a
-**domain-level** model — positional, specific, with a stable accession — whereas
+**domain-level** model, positional, specific, with a stable accession, whereas
 `PTHR36766` is a whole-protein family label named after its best-studied member. The
 distinction between the two is the whole basis of both decisions.
 
@@ -808,8 +831,8 @@ flowchart TD
     I -- yes --> J{Ectodomain?}
     J -- LRR --> LRRRLK[LRR-RLK]
     J -- LysM --> LYSMRLK[LysM-RLK]
-    J -- none --> ORLK[other-RLK]
-    I -- no --> OTHER[Other]
+    J -- none --> OTHER[Other]
+    I -- no --> OTHER
     H -- no --> K{"LRR or LysM, with TM or SP?"}
     K -- LRR --> LRRRLP[LRR-RLP]
     K -- LysM --> LYSMRLP[LysM-RLP]
@@ -822,31 +845,50 @@ flowchart TD
 
 ### 6.2 The rule table
 
+The reference scheme, quoted from the Methods of Rody et al. (2019):
+
+> "1) TM-LRR encoding family: RLK (TM + LRR or NB-LRR + kinase domains), RLP (TM + LRR or
+> NB-LRR or LysM); 2) NBS-LRR encoding family: TN (TIR + NBS/NB/NB-ARC), TNL (TIR + NB-ARC
+> + LRR or NB-LRR), CN (CC + NB-ARC), CNL (CC + NB-ARC + LRR or NB-LRR); 3) Other domains
+> combinations: TM-CC (TM + CC), TIR (TIR), Other variants."
+
+Every rule below falls into one of three groups against that scheme:
+
+- **implements one of their combinations directly**, `TN`, `TNL`, `CN`, `CNL`,
+  `LRR-RLK`, `LysM-RLK`, `LRR-RLP`, `LysM-RLP`, `TM-CC`, and `TX` for their `TIR` class;
+- **names one of their "Other variants"**, `NL` and `N`, NB-ARC carriers with no
+  N-terminal `CC`/`TIR` domain, which their scheme leaves unlabelled;
+- **is part of the RPW8 extension**, `RNL`, `RN` and `RX`, which have no counterpart in
+  their scheme because RPW8 is not among their features (§1).
+
 Rules are evaluated in priority order and the first match wins. Priorities 1–17 are
 written so that they are mutually exclusive **independently of their order**; priorities
-18–19 are ordered catch-alls.
+18–19 are ordered catch-alls. **Priority 13 is deliberately vacant**: it belongs to the
+opt-in `other-RLK` rule, which is shipped commented out because Rody et al. require an
+ectodomain for an RLK (§1). Priorities are labels, not positions, so the gap is inert,
+`rule_priority` in the output tables and the `reason` strings refer to these numbers, and
+they stay stable whether or not the rule is enabled.
 
 | # | Rule | Family | Requires | Requires one of | Forbids |
 |---|---|---|---|---|---|
-| 1 | `CNL` | NLR | NB-ARC, CC, LRR | — | TIR, RPW8 |
-| 2 | `TNL` | NLR | NB-ARC, TIR, LRR | — | RPW8 |
-| 3 | `RNL` | NLR | NB-ARC, RPW8, LRR | — | — |
-| 4 | `NL` | NLR | NB-ARC, LRR | — | CC, TIR, RPW8 |
-| 5 | `CN` | NLR | NB-ARC, CC | — | LRR, TIR, RPW8 |
-| 6 | `TN` | NLR | NB-ARC, TIR | — | LRR, RPW8 |
-| 7 | `RN` | NLR | NB-ARC, RPW8 | — | LRR |
-| 8 | `N` | NLR | NB-ARC | — | CC, TIR, RPW8, LRR |
-| 9 | `TX` | NLR-associated | TIR | — | NB-ARC, LRR |
-| 10 | `RX` | NLR-associated | RPW8 | — | NB-ARC, TIR |
+| 1 | `CNL` | NLR | NB-ARC, CC, LRR |, | TIR, RPW8 |
+| 2 | `TNL` | NLR | NB-ARC, TIR, LRR |, | RPW8 |
+| 3 | `RNL` | NLR | NB-ARC, RPW8, LRR |, |, |
+| 4 | `NL` | NLR | NB-ARC, LRR |, | CC, TIR, RPW8 |
+| 5 | `CN` | NLR | NB-ARC, CC |, | LRR, TIR, RPW8 |
+| 6 | `TN` | NLR | NB-ARC, TIR |, | LRR, RPW8 |
+| 7 | `RN` | NLR | NB-ARC, RPW8 |, | LRR |
+| 8 | `N` | NLR | NB-ARC |, | CC, TIR, RPW8, LRR |
+| 9 | `TX` | NLR-associated | TIR |, | NB-ARC, LRR |
+| 10 | `RX` | NLR-associated | RPW8 |, | NB-ARC, TIR |
 | 11 | `LRR-RLK` | RLK | STTK, LRR | TM or SP | NB-ARC, TIR, RPW8 |
 | 12 | `LysM-RLK` | RLK | STTK, LysM | TM or SP | NB-ARC, TIR, RPW8, LRR |
-| 13 | `other-RLK` | RLK | STTK | TM or SP | NB-ARC, TIR, RPW8, LRR, LysM |
 | 14 | `LRR-RLP` | RLP | LRR | TM or SP | NB-ARC, TIR, RPW8, STTK |
 | 15 | `LysM-RLP` | RLP | LysM | TM or SP | NB-ARC, TIR, RPW8, STTK, LRR |
-| 16 | `other-RLP` | RLP | — | (TM or SP) and (ectodomain) | NB-ARC, TIR, RPW8, STTK, LRR, LysM |
-| 17 | `TM-CC` | TM-CC | TM, CC | — | NB-ARC, STTK, LRR, LysM, TIR, RPW8 |
-| 18 | `Other` | Other | at least one core immune feature | — | — |
-| 19 | `Non-RGA` | Non-RGA | no core immune feature | — | — |
+| 16 | `other-RLP` | RLP |, | (TM or SP) and (ectodomain) | NB-ARC, TIR, RPW8, STTK, LRR, LysM |
+| 17 | `TM-CC` | TM-CC | TM, CC |, | NB-ARC, STTK, LRR, LysM, TIR, RPW8 |
+| 18 | `Other` | Other | at least one core immune feature |, |, |
+| 19 | `Non-RGA` | Non-RGA | no core immune feature |, |, |
 
 Notes on the design:
 
@@ -863,10 +905,16 @@ Notes on the design:
   `TX`, not an RLK. This follows the priority order of the specification; it is stated
   here because it is a real biological decision (IRAK-like TIR-kinases exist).
 - **A lone coiled coil is not immune evidence.** `core_immune_features` deliberately
-  excludes `CC`, which departs from Rody et al. (2019). Under the legacy definition every
-  protein with a predicted coiled coil — 42,300 proteins in R570 by InterProScan Coils
-  alone — would be reported as an `Other` RGA. To reproduce the legacy behaviour exactly,
-  add `CC` to `core_immune_features` in the configuration; nothing else changes.
+  excludes `CC`. This sits *between* the two filters Rody et al. apply. Their published
+  filter is stricter, "only sequences harboring at least one out of three RGA basic
+  domains, LRR, NB-ARC, or NB-LRR, were kept", while their script's working universe is
+  broader, admitting any protein with an LRR, NB-ARC, TIR, kinase, CC or TM hit. Under
+  that broader universe every protein with a predicted coiled coil, 42,300 in R570 by
+  InterProScan Coils alone, is reported as an `Other` RGA. Excluding `CC` reproduces
+  neither exactly; it keeps the classes Rody et al. define that their published filter
+  would drop (`TM-CC` in particular) without letting a generic structural motif stand
+  alone as immune evidence. To restore the script's universe, add `CC` to
+  `core_immune_features`; nothing else changes.
 
 ### 6.3 One worked example per class
 
@@ -876,68 +924,114 @@ Every example below is a real R570 protein; the `reason` column of
 | Class | n in R570 | Example protein | Architecture | Confidence |
 |---|---|---|---|---|
 | `CNL` | 2,648 | `SoffiXsponR570.01Ag189500.1.p` | `CC-NB-ARC-LRR` | high |
-| `TNL` | 0 | — | — | — |
+| `TNL` | 0 |, |, |, |
 | `RNL` | 7 | `SoffiXsponR570.09Ag135100.1.p` | `RPW8-NB-ARC-LRR` | high |
 | `NL` | 786 | `SoffiXsponR570.01Ag021800.1.p` | `NB-ARC-LRR` | high |
 | `CN` | 358 | `SoffiXsponR570.01Bg125700.1.p` | `CC-NB-ARC` | high |
 | `TN` | 33 | `SoffiXsponR570.03Ag132500.1.p` | `TIR-NB-ARC` | high |
-| `RN` | 0 | — | — | — |
+| `RN` | 0 |, |, |, |
 | `N` | 191 | `SoffiXsponR570.01Ag185600.1.p` | `NB-ARC` | high |
 | `TX` | 20 | `SoffiXsponR570.05Ag076500.1.p` | `TIR` | high |
-| `RX` | 0 | — | — | — |
+| `RX` | 0 |, |, |, |
 | `LRR-RLK` | 2,992 | `SoffiXsponR570.01Ag036700.1.p` | `LRR-TM-STTK` | high |
 | `LysM-RLK` | 45 | `SoffiXsponR570.01Ag452300.1.p` | `SP-LysM-TM-STTK` | high |
-| `other-RLK` | 5,527 | `SoffiXsponR570.01Ag020500.1.p` | `SP-TM-STTK` | high |
 | `LRR-RLP` | 1,238 | `SoffiXsponR570.01Ag021100.1.p` | `SP-LRR` | high |
 | `LysM-RLP` | 80 | `SoffiXsponR570.01Ag521200.1.p` | `SP-LysM-TM` | high |
-| `other-RLP` | 0 | — | — | — |
+| `other-RLP` | 0 |, |, |, |
 | `TM-CC` | 8,105 | `SoffiXsponR570.01Ag051400.1.p` | `CC-TM` | high |
-| `Other` | 11,266 | `SoffiXsponR570.01Ag001100.1.p` | `STTK` | high |
+| `Other` | 16,793 | `SoffiXsponR570.01Ag001100.1.p` | `STTK` | high |
 | `NA` | 266,435 | `SoffiXsponR570.01Ag000100.1.p` | `NA` | high |
 
 Full traces for one representative of each of the five families:
 
-**`CNL` — `SoffiXsponR570.01Ag189500.1.p`** — a CC called by the domain model alone. Under
+**`CNL`, `SoffiXsponR570.01Ag189500.1.p`**, a CC called by the domain model alone. Under
 a DeepCoil2-only CC policy this protein is an `NL`.
 
 ```text
 Rule CNL (priority 1): NB-ARC [PF00931 @ 191-361], CC [rx_domain_only @ 9-103], LRR [G3DSA:3.80.10.10 @ 595-1086, SM00369 @ 615-638, SM00369 @ 661-683, SM00369 @ 909-933]. Excluded: no TIR, no RPW8. TM: none (Phobius 0 / DeepTMHMM 0). SP: none (SignalP6 OTHER 1.000). CC: present (DeepCoil2 0 segment(s); Rx domain yes; Coils no) at 9-103. CC is N-terminal to NB-ARC. DeepLoc: Nucleus (0.71) -- consistent. Confidence: high.
 ```
 
-**`LRR-RLK` — `SoffiXsponR570.01Ag036700.1.p`**
+**`LRR-RLK`, `SoffiXsponR570.01Ag036700.1.p`**
 
 ```text
 Rule LRR-RLK (priority 11): STTK [PF07714 @ 223-494, PS50011 @ 220-499, SM00220 @ 220-494, SSF56112 @ 202-495], LRR [G3DSA:3.80.10.10 @ 3-141, PF00560 @ 26-47, PF00560 @ 49-71, PF00560 @ 73-94], TM [154-176]. Excluded: no NB-ARC, no TIR, no RPW8. TM: present (Phobius 1 / DeepTMHMM 1). SP: none (SignalP6 OTHER 1.000). CC: none (DeepCoil2 0 segment(s); Rx domain no; Coils no). DeepLoc: Cell membrane (0.91) -- consistent. Confidence: high.
 ```
 
-**`LRR-RLP` — `SoffiXsponR570.01Ag021100.1.p`**
+**`LRR-RLP`, `SoffiXsponR570.01Ag021100.1.p`**
 
 ```text
 Rule LRR-RLP (priority 14): LRR [G3DSA:3.80.10.10 @ 240-328, G3DSA:3.80.10.10 @ 329-509, G3DSA:3.80.10.10 @ 35-239, PF00560 @ 317-338, +4 more], SP [cleavage site 34-35]. Excluded: no NB-ARC, no TIR, no RPW8, no STTK. TM: none (Phobius 0 / DeepTMHMM 0). SP: present (SignalP6 SP 0.999, CS 34-35). CC: none (DeepCoil2 0 segment(s); Rx domain no; Coils no). DeepLoc: Extracellular (0.60) -- consistent. Confidence: high.
 ```
 
-**`TM-CC` — `SoffiXsponR570.01Ag051400.1.p`**
+**`TM-CC`, `SoffiXsponR570.01Ag051400.1.p`**
 
 ```text
 Rule TM-CC (priority 17): TM [194-213], CC [deepcoil+coils @ 130-179]. Excluded: no NB-ARC, no STTK, no LRR, no LysM, no TIR, no RPW8. TM: present (Phobius 1 / DeepTMHMM 1). SP: none (SignalP6 OTHER 1.000). CC: present (DeepCoil2 1 segment(s), max score 0.705; Rx domain no; Coils yes) at 130-179. DeepLoc: Cell membrane (0.61) -- consistent. Confidence: high.
 ```
 
-**`Other` — `SoffiXsponR570.01Ag001100.1.p`**
+**`Other`, `SoffiXsponR570.01Ag001100.1.p`**
 
 ```text
 Rule Other (priority 18): STTK [PF07714 @ 898-1158, PR00109 @ 1015-1033, PR00109 @ 1086-1108, PR00109 @ 1130-1152, +4 more]. TM: none (Phobius 0 / DeepTMHMM 0). SP: none (SignalP6 OTHER 1.000). CC: none (DeepCoil2 0 segment(s); Rx domain no; Coils no). DeepLoc: Cytoplasm (0.57) -- consistent. Confidence: high.
 ```
 
+**`Other`, `SoffiXsponR570.01Ag020500.1.p`**, the anchored kinase with no recognised
+ectodomain. RGAugury would call this an `other-RLK`; Rody et al. require an ectodomain, so
+it stays in `Other` (§1). 5,527 R570 proteins land here for this reason, and they are the
+single largest block of the `Other` class.
+
+```text
+Rule Other (priority 18): SP [cleavage site 27-28], STTK [PF00069 @ 501-773, PS50011 @ 498-779, SM00220 @ 498-775, SSF56112 @ 480-776], TM [437-461]. TM: present (Phobius 1 / DeepTMHMM 1). SP: present (SignalP6 SP 0.999, CS 27-28). CC: none (DeepCoil2 0 segment(s); Rx domain no; Coils no). DeepLoc: Cell membrane (0.77) -- consistent. Confidence: high.
+```
+
 Classes with zero members in R570: `TNL`, `RN`, `RX`, `other-RLP`.
 `TNL` and `RN`/`RX` are biologically expected to be rare or absent in a grass;
-`other-RLP` is unreachable by design (§6.2).
+`other-RLP` is unreachable by design (§6.2). `other-RLK` is absent from the table
+entirely: the rule is shipped disabled (§1, §6.2).
+
+### 6.4 Choosing a rule set: Rody, Rody + RGAugury, or your own
+
+The shipped default is **Rody et al. (2019) plus the three extensions of §1**, call it
+*Rody-extended*. Every other combination is reached by editing
+[`rga_config.yaml`](../../code/rgas/config/rga_config.yaml), no code changes. Only the
+consensus policies of row 4 also have a command-line flag (`--cc-policy`); the rule
+switches deliberately do not, because a change of method belongs in the recorded
+configuration rather than in a shell history. Either way `run_metadata.json` stores the
+fully resolved configuration, so a result always carries the rule set that produced it.
+
+| preset | what you get | changes from the shipped default |
+|---|---|---|
+| **Rody-extended** *(default)* | the published Rody et al. rules, plus SP anchoring, RPW8/RNL and the Rx CC channel | none |
+| **Rody, as published** | the published rules only | revert all three extensions (rows 2–4 below) |
+| **Rody + RGAugury** | the default plus RGAugury's RLK scope | enable row 1 below |
+| **Your own** | anything | add rules; §8 |
+
+Each switch is independent, mix them freely:
+
+| # | switch | key | shipped | to change it |
+|---|---|---|---|---|
+| 1 | **RLK ectodomain requirement** (the one Rody/RGAugury conflict) | `rules`, priority 13 | Rody: ectodomain required | uncomment the `other-RLK` block. Adds an `other-RLK` subclass; 5,527 R570 proteins move out of `Other` |
+| 2 | **SP as a membrane anchor** | `any_of: [[TM, SP]]` on the four RLK/RLP rules | on (extension) | delete the `any_of` line and add `TM` to `all_of`. `other-RLP` carries the same group and is unreachable either way |
+| 3 | **RPW8 features and classes** | `interproscan_features.RPW8` | on (extension) | set the accession list to `[]`. The `RNL`/`RN`/`RX` rules stay in the file and simply never fire |
+| 4 | **Rx CC domain channel** | `cc_domain_accessions` | on (extension) | set to `[]` and `policies.cc: coils` for the published Coils-only behaviour, or `policies.cc: deepcoil` for this pipeline's earlier default (§5.4) |
+| 5 | **CC as core immune evidence** | `core_immune_features` | off | add `CC` to restore the working universe of the Rody et al. script (§6.2). Not part of any preset above, it widens `Other`, it does not change a rule |
+
+All seven combinations named here were loaded and checked: each keeps the rule set
+provably mutually exclusive and still assigns exactly one class to every one of the 512
+feature combinations. That check runs at startup on whatever configuration you supply, so
+a rule set that breaks exclusivity fails immediately rather than misclassifying quietly.
+
+> **Two switches change what a class *means*, not just how many members it has.** Enabling
+> row 1 makes `Other` and `other-RLK` incomparable with a default run; reverting row 2
+> changes which proteins are RLK/RLP at all. Record which preset you used alongside any
+> count you publish, `run_metadata.json` already does this for you.
 
 ---
 
 ## 7. Outputs
 
 Written under `--outdir` (default `results/rgas/<organism>/`). Every file is UTF-8,
-tab-separated, has a header, and uses the literal string `NA` for missing values — never
+tab-separated, has a header, and uses the literal string `NA` for missing values, never
 an empty cell, never `NaN`.
 
 | File | Contents |
@@ -957,7 +1051,7 @@ an empty cell, never `NaN`.
 | `logs/run.log` | full structured log of the run |
 | `cache/deepcoil_raw_segments.tsv` | unfiltered DeepCoil2 segments, reused across runs |
 
-### 7.1 Data dictionary — `rga_predictions.tsv`
+### 7.1 Data dictionary, `rga_predictions.tsv`
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -969,8 +1063,8 @@ an empty cell, never `NaN`.
 | `rga_subclass` | str | the subclass assigned by the matched rule |
 | `domain_architecture` | str | features ordered N→C by coordinate, e.g. `CC-NB-ARC-LRR` |
 | `features_found` | str | `;`-separated, sorted controlled-vocabulary features |
-| `feature_coords` | str | where each feature is, as `FEATURE:start-end,start-end;FEATURE:…`. Merged intervals, 1-based inclusive. **Split on `;` then on the *first* `:`** — Gene3D accessions contain colons |
-| `feature_accessions` | str | which signatures supported each feature, as `FEATURE:ACC,ACC;…`. Signature accessions (InterProScan column 5); a hit matched through its InterPro accession is still listed under the signature that produced it. A CC called by DeepCoil2 alone has no accession — it is a predictor, not a signature — so `CC` is absent here while present in `feature_coords`; `cc_source` disambiguates |
+| `feature_coords` | str | where each feature is, as `FEATURE:start-end,start-end;FEATURE:…`. Merged intervals, 1-based inclusive. **Split on `;` then on the *first* `:`**, Gene3D accessions contain colons |
+| `feature_accessions` | str | which signatures supported each feature, as `FEATURE:ACC,ACC;…`. Signature accessions (InterProScan column 5); a hit matched through its InterPro accession is still listed under the signature that produced it. A CC called by DeepCoil2 alone has no accession, it is a predictor, not a signature, so `CC` is absent here while present in `feature_coords`; `cc_source` disambiguates |
 | `n_lrr` | int | merged LRR intervals from every source |
 | `n_lrr_repeats` | int | merged LRR intervals from repeat-level signatures only |
 | `defining_domain_databases` | int | distinct signature databases supporting the class-defining domain |
@@ -979,7 +1073,7 @@ an empty cell, never `NaN`.
 | `n_tm_phobius_raw` | int | helices as reported by Phobius |
 | `n_tm_deeptmhmm_raw` | int | helices as reported by DeepTMHMM |
 | `n_tm_dropped_in_sp` | int | helices discarded because they lie inside the signal peptide |
-| `n_tm_consensus` | int | helices surviving `--tm-policy` — the count behind `tm_consensus` |
+| `n_tm_consensus` | int | helices surviving `--tm-policy`, the count behind `tm_consensus` |
 | `tm_consensus` | bool | TM feature after applying `--tm-policy` |
 | `sp_signalp` | bool | SignalP 6.0 called a signal peptide |
 | `sp_phobius` | bool | Phobius called a signal peptide |
@@ -1024,11 +1118,11 @@ segments and consensus TM helices.
 `locus`, `n_isoforms`, `n_isoforms_rga`, `representative_protein_id`, `rga_family`,
 `rga_subclass`, `subclasses_observed`, `isoforms_disagree`, `confidence`. The
 representative is the longest isoform, ties broken by protein ID. `isoforms_disagree`
-flags loci whose isoforms did not all receive the same subclass — a direct readout of how
+flags loci whose isoforms did not all receive the same subclass, a direct readout of how
 much alternative and fragmented gene models perturb the counts.
 
 For R570: 194,593 loci, of which **18,946 carry at least one RGA isoform** (against 33,296
-RGA proteins — a 1.76-fold isoform inflation) and **2,214 are NLR loci** (against 4,023 NLR
+RGA proteins, a 1.76-fold isoform inflation) and **2,214 are NLR loci** (against 4,023 NLR
 proteins). 1,828 loci have isoforms that were assigned different subclasses.
 
 ---
@@ -1056,15 +1150,15 @@ Edit `code/rgas/config/rga_config.yaml`, and nothing else.
 5. **Thresholds**. `coiled_coil.threshold` / `min_length` / `max_gap`,
    `transmembrane.sp_overlap_fraction`, `intervals.min_lrr_copies`. `min_length: 21`
    is grounded (3 heptads; Simm et al. 2021); `threshold: 0.5` is a documented choice, not
-   a DeepCoil2 default — see §5.4 before changing either.
+   a DeepCoil2 default, see §5.4 before changing either.
 6. **Policies** (`policies`). TM, SP and CC consensus, all overridable per run on the
    command line.
 7. **Rules** (`rules`). Add a family, a subclass or an ectodomain. If you add a rule, the
    mutual-exclusivity check will tell you immediately whether it overlaps an existing one;
    add the necessary `none_of` entries until it passes.
-8. **Legacy behaviour.** Add `CC` to `core_immune_features` to reproduce the Rody et al.
-   (2019) definition of an `Other` RGA. To reproduce the earlier DeepCoil2-only CC behaviour, set
-   `cc_domain_accessions: []` and `policies.cc: deepcoil`.
+8. **Rule set / method preset.** Switching between Rody-extended (the default), Rody as
+   published, and Rody + RGAugury is a separate axis from organism adaptation, and it has
+   its own table in [§6.4](#64-choosing-a-rule-set-rody-rody--rgaugury-or-your-own).
 
 No accession, threshold or rule is hard-coded in the Python source; `test_config.py`
 covers the validation that keeps it that way.
@@ -1074,7 +1168,7 @@ covers the validation that keeps it that way.
 ## 9. Limitations and caveats
 
 **Coiled coils remain the weakest feature, and the CNL count is still the least stable
-number this pipeline produces — but it is no longer the most arbitrary one.** The
+number this pipeline produces, but it is no longer the most arbitrary one.** The
 primary CC evidence is now a curated domain model rather than a thresholded
 propensity score, which removes the dependence of the headline `CNL` count on a parameter
 nobody can justify. The residual instability is measured, not asserted. In R570:
@@ -1089,13 +1183,13 @@ nobody can justify. The residual instability is measured, not asserted. In R570:
 
 - a 14-fold swing across the five policies;
 - across the DeepCoil2 threshold × min-length grid, the number of CC-positive proteins in
-  the proteome ranges from 13,744 to 63,371 — a 4.6-fold swing.
+  the proteome ranges from 13,744 to 63,371, a 4.6-fold swing.
 
 The defensible statement about R570 is *"roughly 2,600 NLRs carry evidence of an
 N-terminal coiled coil, of which 2,328 rest on a curated domain model and the rest on a
-propensity predictor"* — not "R570 has exactly 2,648 CNLs".
+propensity predictor"*, not "R570 has exactly 2,648 CNLs".
 
-**A tighter threshold does not buy reliability — it relocates the error.** This is worth
+**A tighter threshold does not buy reliability, it relocates the error.** This is worth
 stating explicitly because the intuition runs the other way. Classification here is a
 **total partition**: there is no "unknown" bucket, so an NB-ARC+LRR protein whose CC is
 not called is not set aside, it is positively asserted to be an `NL`. Every `CNL` lost to a
@@ -1114,13 +1208,13 @@ Precision is flat within two points from 0.4 to 0.7 while recall collapses seven
 The 100 % at 0.8 is n = 3. Raising `cc_min_length` behaves the same way: 21 → 28 residues
 takes `CNL` from 396 to 21, because the NLR CC segments DeepCoil2 calls in this proteome
 sit at 21–27 residues. And the DeepCoil authors' own "very strict cut-off of 0.9" leaves
-**476 CC-positive proteins in the whole proteome and `CNL` = 0** — the maximum plateau
+**476 CC-positive proteins in the whole proteome and `CNL` = 0**, the maximum plateau
 score anywhere in R570 is 0.922. It is a discovery cut-off for mining a genome, not an
 annotation cut-off, and it does not transfer.
 
 **The default `union` inflates `TM-CC`, and the confidence column is how you see it.**
 Making `union` the default promotes InterProScan Coils from a cross-check to a full
-channel, and `TM-CC` — defined by the two least specific features in the vocabulary —
+channel, and `TM-CC`, defined by the two least specific features in the vocabulary,
 absorbs the difference: **3,960 under `deepcoil`, 8,105 under `union`**, against just 11
 under `rx_domain`. Almost none of that growth is domain-backed, and the grading says so:
 **5,934 of the 8,105 `TM-CC` calls (73 %) are `low` confidence**, against 420 `high`. Filter
@@ -1132,21 +1226,21 @@ only domain-level CC evidence. The `CNL` figure is barely affected by the choice
 sensitive.** At `threshold 0.5` / `min_length 21`, DeepCoil2 calls a CC on 18,744 proteins
 while InterProScan Coils calls one on 42,300; the 2×2 contingency is 14,165 both /
 4,579 DeepCoil2-only / 28,135 Coils-only. At `threshold 0.2` / `min_length 14` DeepCoil2
-calls 63,371 — more than Coils. The literature claim that deep-learning predictors
+calls 63,371, more than Coils. The literature claim that deep-learning predictors
 outperform COILS concerns accuracy, not permissiveness, and the direction of the
 difference here is entirely a function of the chosen threshold.
 
 **Neither predictor has a benchmarked operating point.** Simm et al. (2021) evaluated the
 coiled-coil predictors against the whole PDB via SOCKET and found a 30-fold spread in how
 many coiled coils they call and agreement with structure close to random (MCC 0.02 for
-NCOILS, 0.22 at best). DeepCoil was excluded from that benchmark — it was capped at 500
-residues at the time — so it has no independent structural evaluation either. This is the
+NCOILS, 0.22 at best). DeepCoil was excluded from that benchmark, it was capped at 500
+residues at the time, so it has no independent structural evaluation either. This is the
 strongest reason the domain channel now leads, and the reason the two predictor-only
 confidence demotions exist.
 
 **The Rx domain is not "the" NLR coiled coil.** `PF18052` models the CC of Rx/Gpa2-type
 CNLs. 1,006 of the 4,023 R570 NLRs are positive for none of the three channels and stay
-CC-negative. `CNL` is still a floor — a much higher and better-supported floor than the
+CC-negative. `CNL` is still a floor, a much higher and better-supported floor than the
 396 the DeepCoil2-only policy gives, but a floor.
 
 **Domain-based prediction identifies candidates, not resistance genes.** An RGA call
@@ -1162,10 +1256,23 @@ rows. Use `rga_predictions_by_locus.tsv` and treat protein-level counts as upper
 by profile HMMs; the true repeat count is routinely underestimated, and region-level
 signatures merge everything into one interval (§5.2).
 
-**An RLK/RLP call is topology inference, not evidence of function.** "Kinase plus a
-transmembrane helix" says a protein is probably a membrane-anchored kinase — not that it
-is an immune receptor. The `other-RLK` class in particular (5,527 proteins in R570) is
-dominated by ordinary receptor kinases with no established role in immunity.
+**An RLK/RLP call is topology inference, not evidence of function.** "Kinase plus an
+ectodomain plus a transmembrane helix" says a protein is probably a membrane-anchored
+receptor kinase, not that it is an immune receptor. This is also the reason the RLK rules
+follow Rody et al. rather than RGAugury (§1): the 5,527 R570 proteins that carry a kinase
+and an anchor but no recognised ectodomain would be an `other-RLK` class dominated by
+ordinary receptor kinases with no established role in immunity. They stay in `Other`,
+where the label makes no claim about immunity, and nothing is lost, they are recoverable
+from the shipped table, which is why disabling the rule costs no information:
+
+```python
+anchored_kinase = pred[
+    (pred.rga_subclass == "Other")
+    & pred.domain_architecture.str.contains("STTK")
+    & pred.domain_architecture.str.contains("TM|SP")
+    & ~pred.domain_architecture.str.contains("LRR|LysM")
+]   # 5,527 proteins in R570 -- exactly the RGAugury `other-RLK` set
+```
 
 **`TM-CC` is the noisiest class and should be treated as a screening bucket.** It is
 defined by the two least specific features in the vocabulary, so it collects any
@@ -1173,9 +1280,9 @@ tail-anchored coiled-coil protein. The highest-confidence `TM-CC` call in R570,
 `SoffiXsponR570.01Ag051400.1.p`, is a VAMP/synaptobrevin R-SNARE: its "coiled coil"
 (residues 159–179) is the v-SNARE coiled-coil homology domain (`PS50892`) and its
 "transmembrane helix" (194–213) is the SNARE tail anchor. Nothing in the pipeline is
-wrong — the protein genuinely has a TM and a CC — but it is not an immune receptor.
+wrong, the protein genuinely has a TM and a CC, but it is not an immune receptor.
 8,105 `TM-CC` proteins in R570 should be read as an upper bound on a heterogeneous class,
-and filtered further before use — starting with the `confidence` column, which grades
+and filtered further before use, starting with the `confidence` column, which grades
 5,934 of them `low`.
 
 **NLR counts depend on proteome completeness and isoform redundancy.** They also depend on
@@ -1205,7 +1312,7 @@ deterministic (stable sorts throughout, no reliance on dict or set iteration ord
 two runs on the same inputs produce byte-identical tables.
 
 The DeepCoil2 cache under `cache/` holds *unfiltered* segments, so changing the CC
-threshold, minimum length or gap parameter never requires re-reading the archives — and
+threshold, minimum length or gap parameter never requires re-reading the archives, and
 never changes what the cache contains.
 
 ---
@@ -1249,9 +1356,10 @@ the bioRxiv API); references 1–16 on 2026-08-24 and reference 17 on 2026-08-26
 9. Käll L, Krogh A, Sonnhammer ELL (2004). *A combined transmembrane topology and signal
    peptide prediction method.* J Mol Biol 338:1027–1036.
    doi:[10.1016/j.jmb.2004.03.016](https://doi.org/10.1016/j.jmb.2004.03.016)
-10. Hallgren J, Tsirigos KD, Pedersen MD, Almagro Armenteros JJ, Marcatili P, Nielsen H,
-    Krogh A, Winther O (2022). *DeepTMHMM predicts alpha and beta transmembrane proteins
-    using deep neural networks.* bioRxiv 2022.04.08.487609.
+10. Jeppe Hallgren, Konstantinos D. Tsirigos, Mads D. Pedersen, José Juan Almagro Armenteros,
+    Paolo Marcatili, Henrik Nielsen, Anders Krogh and Ole Winther (2022). 
+    DeepTMHMM predicts alpha and beta transmembrane proteins using deep 
+    neural networks. doi: [https://doi.org/10.1101/2022.04.08.487609](https://doi.org/10.1101/2022.04.08.487609)
     doi:[10.1101/2022.04.08.487609](https://doi.org/10.1101/2022.04.08.487609)
 11. Teufel F et al. (2022). *SignalP 6.0 predicts all five types of signal peptides using
     protein language models.* Nat Biotechnol 40:1023–1025.
@@ -1259,7 +1367,7 @@ the bioRxiv API); references 1–16 on 2026-08-24 and reference 17 on 2026-08-26
 12. Thumuluri V et al. (2022). *DeepLoc 2.0: multi-label subcellular localization
     prediction using protein language models.* Nucleic Acids Res 50:W228–W234.
     doi:[10.1093/nar/gkac278](https://doi.org/10.1093/nar/gkac278)
-13. Ludwiczak J, Winski A, Szczepaniak K, Alva V, Dunin-Horkawicz S (2019). *DeepCoil — a
+13. Ludwiczak J, Winski A, Szczepaniak K, Alva V, Dunin-Horkawicz S (2019). *DeepCoil, a
     fast and accurate prediction of coiled-coil domains in protein sequences.*
     Bioinformatics 35(16):2790–2795.
     doi:[10.1093/bioinformatics/bty1062](https://doi.org/10.1093/bioinformatics/bty1062)
@@ -1273,7 +1381,7 @@ the bioRxiv API); references 1–16 on 2026-08-24 and reference 17 on 2026-08-26
 17. Simm D, Hatje K, Waack S, Kollmar M (2021). *Critical assessment of coiled-coil
     predictions based on protein structure data.* Scientific Reports 11:12439.
     doi:[10.1038/s41598-021-91886-w](https://doi.org/10.1038/s41598-021-91886-w)
-    — evaluates the coiled-coil predictors against the entire PDB via SOCKET. Source of
+   , evaluates the coiled-coil predictors against the entire PDB via SOCKET. Source of
     the 30-fold spread between tools, the near-random MCC values, the 14/21-residue length
     cut-offs adopted here, and the note that DeepCoil was excluded from that benchmark.
 
@@ -1281,7 +1389,7 @@ the bioRxiv API); references 1–16 on 2026-08-24 and reference 17 on 2026-08-26
 publishes no cut-off was checked against both the software documentation
 (<https://github.com/labstructbioinf/DeepCoil>, which defines `cc` only as "sharpened
 coiled coil propensity") and reference 13, which reports AUC/ROC and F1 and names a
-cut-off exactly once — the "very strict cut-off of 0.9" used for its human-genome scan.
+cut-off exactly once, the "very strict cut-off of 0.9" used for its human-genome scan.
 Checked 2026-08-26.
 
 **Signature databases.** Every feature call ultimately rests on an accession issued by one
@@ -1295,8 +1403,8 @@ of these resources, so they are cited as data sources, not merely as tools.
     doi:[10.1093/nar/gkae997](https://doi.org/10.1093/nar/gkae997)
 
 **Database releases.** Cite the InterPro/Pfam release used for your InterProScan run. For
-the R570 reference run the release number is **not recorded in the data** — the TSV carries
-only the run date `09-08-2026` — so it is left as a `TODO` rather than guessed.
+the R570 reference run the release number is **not recorded in the data**, the TSV carries
+only the run date `09-08-2026`, so it is left as a `TODO` rather than guessed.
 
 **DeepCoil2 model version.** The reference run used pre-computed DeepCoil output whose
 model version is not recorded in the `.out` files. Cite Ludwiczak et al. (2019) and state
@@ -1307,11 +1415,7 @@ the DeepCoil2 model version from your own run; it is a `TODO` here for the same 
 ## 12. How to cite, and licence
 
 If you use this pipeline, please cite the tools and databases it consumes (references 8–16) and the
-classification frameworks it implements (references 1, 2 and 4), and identify the pipeline
-as:
-
-> RGA prediction pipeline v0.0.1, `code/rgas/rgas_prediction.py`, in
-> *SugarcaneTranscriptomics* (this repository). Configuration `rga_config.yaml` v0.0.1.
+classification frameworks it implements (references 1, 2 and 4).
 
 If you quote a `CNL`, `CN` or `TM-CC` count, state the `--cc-policy` it came from: the CC
 consensus is the one knob that moves those numbers materially, and its meaning differs

@@ -31,6 +31,42 @@ def test_mobidblite_is_excluded(cfg):
     assert "MobiDBLite" in cfg.raw["excluded_analyses"]
 
 
+def test_the_commented_out_other_rlk_rule_still_works(cfg, config_path, tmp_path):
+    """Uncommenting the priority-13 `other-RLK` block must produce a valid rule set.
+
+    The block is the documented opt-in for RGAugury RLK scope (README section
+    6.4), and it is commented out, so nothing else in the suite would notice it
+    rotting -- a renamed feature or a dropped key would only surface for the
+    first person who tried to enable it.
+    """
+    import re
+
+    from rga import rules
+
+    text = config_path.read_text(encoding="utf-8")
+    block = re.search(
+        r"^  # - id: other-RLK\n(?:  #.*\n)+", text, re.M
+    )
+    assert block, "the commented-out other-RLK block is no longer in the config"
+    uncommented = re.sub(r"^  # ?", "  ", block.group(0), flags=re.M)
+
+    path = tmp_path / "with_other_rlk.yaml"
+    path.write_text(text.replace(block.group(0), uncommented, 1), encoding="utf-8")
+    enabled = load_config(path)
+
+    assert "other-RLK" in {rule.id for rule in enabled.rules}
+    assert len(enabled.rules) == len(cfg.rules) + 1
+    assert rules.find_overlapping_rules(enabled) == []
+
+    core = frozenset(enabled.core_immune_features)
+    for anchor in ("TM", "SP"):
+        call = rules.classify_features(enabled.rules, frozenset({"STTK", anchor}), core)
+        assert (call.rule_id, call.family) == ("other-RLK", "RLK"), anchor
+
+    # and the id the confidence section already carries is now a live class
+    assert "other-RLK" in enabled.raw["confidence"]["classes_using_tm_sp"]
+
+
 def test_ectodomain_token_is_expanded(cfg):
     """The ECTODOMAIN_FEATURES placeholder resolves to the configured list."""
     rule = next(r for r in cfg.rules if r.id == "other-RLP")

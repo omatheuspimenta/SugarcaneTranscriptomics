@@ -96,10 +96,17 @@ features:
 # none of these is Non-RGA; a protein with at least one but matching no
 # specific rule falls through to "Other".
 #
-# NOTE (deviation from Rody et al. 2019): CC is deliberately NOT in this list.
-# A lone coiled coil is a generic structural motif present in tens of thousands
-# of proteins and is not, by itself, evidence of an immune receptor. To
-# reproduce the legacy behaviour exactly, add `CC` to this list.
+# NOTE: CC is deliberately NOT in this list, which sits between the two filters
+# Rody et al. (2019) apply. Their published filter is stricter -- "Only sequences
+# harboring at least one out of three RGA basic domains - LRR, NB-ARC, or NB-LRR
+# - were kept" -- while their script's working universe is broader, admitting any
+# protein with an LRR, NB-ARC, TIR, kinase, CC or TM hit. A lone coiled coil is a
+# generic structural motif present in tens of thousands of proteins (42,300 in
+# R570 by InterProScan Coils alone) and is not, by itself, evidence of an immune
+# receptor. Excluding it keeps the classes Rody et al. define that their
+# published filter would drop (TM-CC in particular) without letting CC stand
+# alone as immune evidence. To restore the script's working universe, add `CC`
+# to this list.
 core_immune_features:
   - NB-ARC
   - TIR
@@ -539,16 +546,30 @@ rules:
     any_of: [[TM, SP]]
     none_of: [NB-ARC, TIR, RPW8, LRR]
 
-  # NOTE (deviation from Rody et al. 2019): this subclass has no legacy
-  # counterpart. The published RLK rule is "TM + LRR or NB-LRR + kinase
-  # domains", i.e. an ectodomain is REQUIRED, so a kinase with a membrane
-  # anchor but no LRR/LysM is not an RGA there at all. Following RGAugury
-  # (Li et al. 2016), which classifies RLKs on kinase + anchor and uses the
-  # ectodomain only to sub-type (LRR-RLK / LysM-RLK / other-receptor), this
-  # pipeline keeps them as `other-RLK`. On R570 v2.1 that is 5,527 proteins
-  # (3,422 loci) which the legacy method reports as Non-RGA. To reproduce the
-  # legacy scope, drop this rule; `LRR-RLK` above is the directly comparable
-  # number (1,757 loci here vs 1,721 in the legacy table).
+  # OPT-IN RULE, SHIPPED DISABLED -- priority 13 is deliberately left vacant.
+  #
+  # This is the one place where Rody et al. (2019) and RGAugury (Li et al.
+  # 2016) give conflicting rules, and the default resolves it for Rody:
+  #
+  #   Rody et al. 2019, Methods: RLK = "TM + LRR or NB-LRR + kinase domains".
+  #     An ectodomain is REQUIRED. A kinase with a membrane anchor but no
+  #     LRR/LysM is not an RLK there, and does not enter their RGA candidate
+  #     set at all. Here it still lands in `Other`, which is an RGA family.
+  #   RGAugury 2016: RLKs are called on kinase + anchor, and the ectodomain is
+  #     used only to sub-type them (LRR-RLK / LysM-RLK / other-receptor).
+  #
+  # Rody et al. is the method this pipeline reimplements, it is three years
+  # newer, and it is sugarcane-specific, so it supplies the default: only
+  # `LRR-RLK` and `LysM-RLK` exist, and an anchored kinase with no recognised
+  # ectodomain falls through to `Other` (priority 18). Note that this is a
+  # *scope* difference, not a detection one: `LRR-RLK` is the directly
+  # comparable number and agrees closely (1,757 loci here vs 1,721 in the
+  # legacy table).
+  #
+  # Uncomment the block below to get RGAugury scope instead. On R570 v2.1 that
+  # moves 5,527 proteins (3,422 loci) out of `Other` into a new `other-RLK`
+  # subclass. Nothing else needs changing: `confidence.classes_using_tm_sp`
+  # already lists `other-RLK`.
   # - id: other-RLK
   #   priority: 13
   #   family: RLK
@@ -559,13 +580,19 @@ rules:
   #   none_of: [NB-ARC, TIR, RPW8, LRR, LysM]
 
   # ---- Receptor-like proteins ----
-  # NOTE (deviation from Rody et al. 2019): the published RLP rule is
+  # NOTE (EXTENSION of Rody et al. 2019): the published RLP rule is
   # "TM + LRR or NB-LRR or LysM". Two differences here.
-  #   1. SP is accepted as a membrane anchor alongside TM (`any_of`). The
-  #      published rules use TM only and never reference a signal peptide, so
-  #      SP anchoring is an EXTENSION of the legacy method, not a correction to
-  #      it. On R570 v2.1 it accounts for 315 of the 407 loci the legacy table
-  #      calls `Other` (LRR alone) and this pipeline calls `LRR-RLP`.
+  #   1. SP is accepted as a membrane anchor alongside TM (`any_of`). Rody et
+  #      al. run Phobius, which predicts signal peptides, but never use a
+  #      signal peptide as a classification criterion; their rules reference TM
+  #      only. SP anchoring is therefore an EXTENSION, not a correction. It is
+  #      additive: it can only promote a protein into an RLK/RLP class, never
+  #      remove one. On R570 v2.1 it accounts for 315 of the 407 loci the
+  #      legacy table calls `Other` (LRR alone) and this pipeline calls
+  #      `LRR-RLP`. To restore the published TM-only rule, delete the
+  #      `any_of: [[TM, SP]]` line from the four RLK/RLP rules and add `TM` to
+  #      their `all_of` instead. See docs/rga/README.md section 6.4, which
+  #      tabulates this switch alongside the other method presets.
   #   2. `NB-ARC` is excluded here. The published rule does not exclude it, so
   #      a TM + LRR + NB-ARC protein without a kinase is an RLP there; here the
   #      NLR rules (priority 1-8) claim it first. ~20 loci on R570 v2.1.
@@ -695,7 +722,10 @@ confidence:
       steps: 2
   # Classes whose assignment depends on the CC feature.
   classes_using_cc: [CNL, CN, TM-CC]
-  # Classes whose assignment depends on the TM/SP channels.
+  # Classes whose assignment depends on the TM/SP channels. `other-RLK` is
+  # listed although its rule is shipped disabled (see the rules section), so
+  # that uncommenting that rule needs no further edit here; an id with no rule
+  # is inert.
   classes_using_tm_sp: [LRR-RLK, LysM-RLK, other-RLK, LRR-RLP, LysM-RLP, other-RLP, TM-CC]
 
 # -----------------------------------------------------------------------------

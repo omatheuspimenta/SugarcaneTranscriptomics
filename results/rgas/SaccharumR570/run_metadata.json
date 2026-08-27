@@ -190,7 +190,7 @@
     "tm_policy": null,
     "workers": 4
   },
-  "command": "code/rgas_prediction.py --input-dir data/rgas/ --outdir results/rgas/SaccharumR570/ --organism-name SaccharumR570",
+  "command": "code/rgas/rgas_prediction.py --input-dir data/rgas/ --outdir results/rgas/SaccharumR570/ --organism-name SaccharumR570",
   "config_version": "0.0.1",
   "counts": {
     "by_confidence": {
@@ -997,5 +997,5 @@
     "sp_overlap": 0.5
   },
   "script_version": "0.0.1",
-  "timestamp_utc": "2026-08-26 19:49:56 UTC"
+  "timestamp_utc": "2026-08-27 17:22:16 UTC"
 }

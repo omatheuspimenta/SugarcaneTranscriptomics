@@ -98,6 +98,78 @@ def test_every_rule_is_documented() -> None:
     assert not missing, f"rules absent from the README: {missing}"
 
 
+def test_the_rule_table_lists_exactly_the_configured_rules() -> None:
+    """README section 6.2 must name every rule, at its priority, and no other.
+
+    ``test_every_rule_is_documented`` only asks whether each rule id appears
+    somewhere in the file, so it stays green when a rule is *removed* from the
+    configuration and its row is left behind in the table. That happened once
+    (the ``other-RLK`` row survived the switch to the Rody et al. RLK rule),
+    and the table then documented a class the pipeline could not produce.
+    """
+    cfg = load_config(CONFIG)
+    readme = (DOCS / "README.md").read_text(encoding="utf-8")
+    table = readme.split("### 6.2 The rule table", 1)[1].split("### 6.3", 1)[0]
+    documented = {
+        m.group(2): int(m.group(1))
+        for m in re.finditer(r"^\| (\d+) \| `([^`]+)` \|", table, re.M)
+    }
+    configured = {rule.id: rule.priority for rule in cfg.rules}
+    assert documented == configured, (
+        f"documented but not configured: "
+        f"{sorted(set(documented) - set(configured))}; "
+        f"configured but not in the table: "
+        f"{sorted(set(configured) - set(documented))}; "
+        f"priority mismatches: "
+        f"{ {k: (documented[k], configured[k]) for k in documented.keys() & configured.keys() if documented[k] != configured[k]} }"
+    )
+
+
+def test_worked_example_counts_match_the_reference_run() -> None:
+    """The per-class counts in README section 6.3 must match the shipped run.
+
+    Skipped when the reference run is not present in the checkout. These counts
+    are quoted in the text and were hand-maintained; they went stale the first
+    time a rule was disabled, reporting an ``other-RLK`` class that no longer
+    existed and an ``Other`` count 5,527 proteins short.
+    """
+    import csv
+
+    counts = REPO / "results" / "rgas" / "SaccharumR570" / "rga_summary_counts.tsv"
+    if not counts.is_file():
+        pytest.skip("reference run not present in this checkout")
+
+    with counts.open(encoding="utf-8", newline="") as handle:
+        actual = {
+            row["rga_subclass"]: int(row["n_proteins"])
+            for row in csv.DictReader(handle, delimiter="\t")
+            if row["level"] == "subclass"
+        }
+
+    readme = (DOCS / "README.md").read_text(encoding="utf-8")
+    section = readme.split("### 6.3 One worked example per class", 1)[1]
+    # bound at the next heading, so a later section's tables can never be
+    # scraped into this one
+    section = re.split(r"^#{2,3} ", section, maxsplit=1, flags=re.M)[0]
+    documented = {}
+    for line in section.splitlines():
+        row = re.match(r"\|\s*`([^`]+)`\s*\|\s*([\d,]+|—)\s*\|", line)
+        if row:
+            value = row.group(2)
+            documented[row.group(1)] = 0 if value == "—" else int(value.replace(",", ""))
+
+    assert documented, "no class-count table found in README section 6.3"
+    mismatched = {
+        cls: (n, actual.get(cls, 0))
+        for cls, n in documented.items()
+        if n != actual.get(cls, 0)
+    }
+    assert not mismatched, f"README (documented, actual): {mismatched}"
+    assert not set(actual) - set(documented), (
+        f"classes in the run but not in the table: {sorted(set(actual) - set(documented))}"
+    )
+
+
 def test_every_rule_has_a_description() -> None:
     """Each rule carries a human-readable description, reused in the report."""
     cfg = load_config(CONFIG)

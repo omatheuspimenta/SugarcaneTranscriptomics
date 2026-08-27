@@ -347,9 +347,10 @@ enlarge the 2⁹ exclusivity proof and creates no `feat_` column of its own.
 **Core immune features** (what makes a protein an RGA candidate at all) are
 `NB-ARC, TIR, RPW8, LRR, STTK, LysM`. **`CC` is deliberately excluded** from that set: a
 coiled coil is common in the proteome at large (structural proteins, myosins, kinesins),
-so treating it as a core immune feature would flood the survey. This is a documented
-deviation from Rody et al. (2019) and is recorded as such in the config next to the key it
-affects.
+so treating it as a core immune feature would flood the survey. This sits between the two
+filters Rody et al. (2019) apply — their published filter (LRR, NB-ARC or NB-LRR only) is
+stricter, their script's working universe (any LRR/NB-ARC/TIR/kinase/CC/TM hit) is broader
+— and is recorded as such in the config next to the key it affects.
 
 ### 8.2 Policies
 
@@ -465,7 +466,7 @@ flowchart TD
     R48 -->|no NB-ARC| R910{"TIR or RPW8 alone"}
     R910 -->|yes| TXRX["<b>TX / RX</b><br/>NLR-associated"]
     R910 -->|no| R1113{"kinase (STTK)<br/>+ TM or SP"}
-    R1113 -->|yes| RLK["<b>LRR-RLK / LysM-RLK / other-RLK</b>"]
+    R1113 -->|yes| RLK["<b>LRR-RLK / LysM-RLK</b><br/>(ectodomain required)"]
     R1113 -->|no| R1416{"ectodomain, no kinase<br/>+ TM or SP"}
     R1416 -->|yes| RLP["<b>LRR-RLP / LysM-RLP / other-RLP</b>"]
     R1416 -->|no| R17{"TM + CC only"}
@@ -475,7 +476,9 @@ flowchart TD
     R18 -->|no| NON["<b>Non-RGA</b>"]
 ```
 
-19 rules, priorities 1–19. The full table with descriptions is
+18 rules, priorities 1–19 with 13 vacant (the opt-in `other-RLK` rule, shipped disabled
+because Rody et al. require an ectodomain for an RLK — see README §1). The full table with
+descriptions is
 [README §6.2](README.md#62-the-rule-table).
 
 ### 9.2 Why an ordered list rather than `if/elif`
@@ -506,8 +509,9 @@ other by construction (`any_core` vs `no_core`).
 ### 9.3 Gaps in the legacy rule set that this fixed
 
 - **RNL was missing entirely** — RPW8-NB-ARC-LRR helper NLRs were being absorbed by `NL`.
-- **TM-CC was missing** — the class exists in the RGAugury framework and is 3,960 proteins
-  in R570.
+- **TM-CC was missing from the script** although the paper defines it — Rody et al. list
+  it under "Other domains combinations: TM-CC (TM + CC)". It is 8,105 proteins in R570
+  under the default CC policy (3,960 under the earlier DeepCoil2-only policy).
 - **TX was in the wrong place**, evaluated after rules that could claim the same proteins.
 
 ---
@@ -597,7 +601,8 @@ Each row is a decision that could reasonably have gone the other way.
 | Decision | Alternatives considered | Why this one | Cost accepted |
 |----------|------------------------|--------------|---------------|
 | Accession matching only | Description regex (as in the legacy script) | Descriptions are unstable free text and match by accident | Accession lists must be curated and audited; hence `accession_audit.tsv` |
-| `CC` excluded from core immune features | Include it, as in Rody et al. (2019) | Coiled coils are ubiquitous; including them inflates the survey with structural proteins | A CC-only protein is `Non-RGA` unless it also has TM (→ `TM-CC`) |
+| `CC` excluded from core immune features | Include it, as the Rody et al. (2019) script's working universe does | Coiled coils are ubiquitous; including them inflates the survey with structural proteins | A CC-only protein is `Non-RGA` unless it also has TM (→ `TM-CC`) |
+| **RLK requires an ectodomain** (`LRR-RLK` / `LysM-RLK` only) | RGAugury scope: kinase + anchor is an RLK, ectodomain only sub-types it (`other-RLK`) | Rody et al. (2019) is the method this reimplements, is three years newer than RGAugury, and is sugarcane-specific; where the two conflict the default follows Rody | 5,527 R570 proteins (3,422 loci) stay in `Other` instead of getting an RLK label. The rule ships commented out at priority 13 for anyone who wants RGAugury scope |
 | **Domain model (`PF18052`) as leading CC channel**, predictors retained beside it | DeepCoil2 alone (earlier revision); Coils alone (legacy) | Eight of nine features come from curated domain models; taking the ninth from a propensity score with no published cut-off and no structural benchmark (Simm et al. 2021) was the pipeline's weakest link. 2,003 of the 3,038 `NL` calls made under the DeepCoil2-only default carried `PF18052` | `PF18052` covers Rx/Gpa2-type CNLs only, so `CNL` is still a floor; 1,006 NLRs remain CC-negative |
 | CC policy default `union` over three channels | `rx_domain` alone; `deepcoil` (the earlier default) | Keeps the predictors contributing the 33 NLRs no domain model supports | Promotes Coils to a full channel, which doubles `TM-CC` (3,960 → 8,105). 73 % of those land at `low` confidence, so the grading exposes it |
 | A third CC channel outside the nine-feature vocabulary | A tenth feature | A tenth feature would double the exclusivity proof to 2¹⁰ and add a `feat_` column that no rule reads | One reserved pseudo-feature name (`CC_domain`) that readers of the config must know about |

@@ -1,6 +1,6 @@
 # RGA prediction report -- SaccharumR570
 
-*Generated 2026-08-26 19:49:56 UTC by `rgas_prediction.py` v0.0.1 (config v0.0.1).*
+*Generated 2026-08-27 17:22:16 UTC by `rgas_prediction.py` v0.0.1 (config v0.0.1).*
 
 ## 1. What this report shows
 
@@ -17,7 +17,7 @@ Six independent annotation tools are harmonised into a single controlled vocabul
 The exact command that produced this report, quoted as it was invoked, so it can be pasted back into a shell from the repository root:
 
 ```bash
-uv run python code/rgas_prediction.py \
+uv run python code/rgas/rgas_prediction.py \
     --input-dir data/rgas/ \
     --outdir results/rgas/SaccharumR570/ \
     --organism-name SaccharumR570
